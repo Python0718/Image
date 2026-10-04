@@ -6,8 +6,7 @@ import tempfile
 import uuid
 import zipfile
 from flask import Flask, jsonify, render_template, request, send_file
-import imageio.v3 as iio
-import numpy as np
+import imageio_ffmpeg
 from PIL import Image, ImageSequence
 import pillow_heif
 from reportlab.graphics import renderPM
@@ -40,6 +39,11 @@ VIDEO_EXTENSIONS = {
     ".wmv",
     ".flv",
 }
+
+
+def get_ffmpeg_path():
+  # imageio-ffmpeg に同梱されている FFmpeg バイナリパスを取得
+  return imageio_ffmpeg.get_ffmpeg_exe()
 
 
 def resize_image(
@@ -80,6 +84,7 @@ def convert_files():
   target_format = request.form.get("target_format", "JPEG").upper()
   session_id = str(uuid.uuid4())
   converted_files = {}
+  errors = []
 
   width_str = request.form.get("width")
   height_str = request.form.get("height")
@@ -91,9 +96,9 @@ def convert_files():
   target_h = (
       int(height_str) if height_str and height_str.strip().isdigit() else None
   )
-  maintain_aspect = maintain_aspect_str.lower() == "true"
 
   files = request.files.getlist("files")
+  ffmpeg_exe = get_ffmpeg_path()
 
   for file in files:
     if not file.filename:
@@ -104,92 +109,115 @@ def convert_files():
     orig_ext = orig_ext.lower()
 
     try:
-      # === 1. M3U8出力の特別処理 ===
-      if target_format == "M3U8" and orig_ext in VIDEO_EXTENSIONS:
+      # === 1. 動画ファイルの処理 (FFmpegによる直接高速エンコード) ===
+      if orig_ext in VIDEO_EXTENSIONS or target_format in (
+          "MP4",
+          "WEBM",
+          "MOV",
+          "AVI",
+          "M3U8",
+      ):
         with tempfile.TemporaryDirectory() as tmpdir:
           input_path = os.path.join(tmpdir, f"input{orig_ext}")
           with open(input_path, "wb") as f:
             f.write(contents)
 
-          output_m3u8 = os.path.join(tmpdir, "output.m3u8")
+          # --- HLS (M3U8) 変換の場合 ---
+          if target_format == "M3U8":
+            output_m3u8 = os.path.join(tmpdir, "output.m3u8")
+            cmd = [ffmpeg_exe, "-y", "-i", input_path]
 
-          scale_filter = ""
-          if target_w or target_h:
-            w = target_w if target_w else -2
-            h = target_h if target_h else -2
-            scale_filter = f"scale={w}:{h}"
+            if target_w or target_h:
+              w = target_w if target_w else -2
+              h = target_h if target_h else -2
+              cmd.extend([
+                  "-vf",
+                  f"scale=trunc({w}/2)*2:trunc({h}/2)*2"
+                  if target_w and target_h
+                  else (
+                      f"scale={w}:-2"
+                      if target_w
+                      else f"scale=-2:{h}"
+                  ),
+              ])
 
-          cmd = ["ffmpeg", "-i", input_path]
-          if scale_filter:
-            cmd.extend(["-vf", scale_filter])
-          cmd.extend([
-              "-codec:v",
-              "libx264",
-              "-codec:a",
-              "aac",
-              "-hls_time",
-              "4",
-              "-hls_playlist_type",
-              "vod",
-              output_m3u8,
-          ])
+            cmd.extend([
+                "-codec:v",
+                "libx264",
+                "-codec:a",
+                "aac",
+                "-hls_time",
+                "4",
+                "-hls_playlist_type",
+                "vod",
+                output_m3u8,
+            ])
 
-          subprocess.run(cmd, check=True)
-
-          zip_io = io.BytesIO()
-          with zipfile.ZipFile(zip_io, "w", zipfile.ZIP_DEFLATED) as zipf:
-            for root, _, filenames in os.walk(tmpdir):
-              for fn in filenames:
-                if fn == f"input{orig_ext}":
-                  continue
-                file_path = os.path.join(root, fn)
-                arcname = (
-                    f"{orig_name}_{fn}" if fn != "output.m3u8" else f"{orig_name}.m3u8"
-                )
-                zipf.write(file_path, arcname)
-
-          zip_filename = f"{orig_name}_m3u8.zip"
-          converted_files[zip_filename] = zip_io.getvalue()
-        continue
-
-      # === 2. 通常の動画ファイル処理 ===
-      if orig_ext in VIDEO_EXTENSIONS:
-        ext = f".{target_format.lower()}"
-        new_filename = orig_name + ext
-
-        temp_video_path = f"temp_{uuid.uuid4()}{orig_ext}"
-        with open(temp_video_path, "wb") as f:
-          f.write(contents)
-        try:
-          meta = iio.immeta(temp_video_path, plugin="pyav")
-          fps = meta.get("fps", 30)
-          frames = []
-          for frame in iio.imiter(temp_video_path, plugin="pyav"):
-            img_frame = Image.fromarray(frame)
-            resized_frame = resize_image(
-                img_frame, target_w, target_h, maintain_aspect
+            subprocess.run(
+                cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
             )
-            frames.append(resized_frame)
-        finally:
-          if os.path.exists(temp_video_path):
-            os.remove(temp_video_path)
 
-        if not frames:
-          raise ValueError("動画フレームを読み込めませんでした")
+            zip_io = io.BytesIO()
+            with zipfile.ZipFile(zip_io, "w", zipfile.ZIP_DEFLATED) as zipf:
+              for root, _, filenames in os.walk(tmpdir):
+                for fn in filenames:
+                  if fn == f"input{orig_ext}":
+                    continue
+                  file_path = os.path.join(root, fn)
+                  arcname = (
+                      f"{orig_name}_{fn}"
+                      if fn != "output.m3u8"
+                      else f"{orig_name}.m3u8"
+                  )
+                  zipf.write(file_path, arcname)
 
-        video_io = io.BytesIO()
-        arr_frames = [np.array(f) for f in frames]
-        iio.imwrite(
-            video_io,
-            arr_frames,
-            extension=ext,
-            plugin="pyav",
-            fps=fps if fps else 30,
-        )
-        converted_files[new_filename] = video_io.getvalue()
-        continue
+            zip_filename = f"{orig_name}_m3u8.zip"
+            converted_files[zip_filename] = zip_io.getvalue()
+            continue
 
-      # === 3. 画像ファイル処理 ===
+          # --- 通常の動画変換 (MP4, MOV, WEBM, AVI 等) ---
+          ext = f".{target_format.lower()}"
+          output_video = os.path.join(tmpdir, f"output{ext}")
+
+          cmd = [ffmpeg_exe, "-y", "-i", input_path]
+
+          # リサイズ設定
+          if target_w or target_h:
+            if target_w and target_h:
+              vf = f"scale={target_w}:{target_h}"
+            elif target_w:
+              vf = f"scale={target_w}:-2"
+            else:
+              vf = f"scale=-2:{target_h}"
+            cmd.extend(["-vf", vf])
+
+          # 主要コーデック設定
+          if target_format == "MP4":
+            cmd.extend([
+                "-c:v",
+                "libx264",
+                "-c:a",
+                "aac",
+                "-pix_fmt",
+                "yuv420p",
+            ])
+          elif target_format == "WEBM":
+            cmd.extend(["-c:v", "libvpx-vp9", "-c:a", "libopus"])
+          elif target_format == "MOV":
+            cmd.extend(["-c:v", "libx264", "-c:a", "aac"])
+
+          cmd.append(output_video)
+
+          subprocess.run(
+              cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+          )
+
+          with open(output_video, "rb") as vf:
+            new_filename = orig_name + ext
+            converted_files[new_filename] = vf.read()
+          continue
+
+      # === 2. 画像ファイルの処理 ===
       ext = f".{target_format.lower()}"
       new_filename = orig_name + ext
 
@@ -217,11 +245,11 @@ def convert_files():
         resized_frames = []
         for frame in ImageSequence.Iterator(img):
           f = frame.copy()
-          f = resize_image(f, target_w, target_h, maintain_aspect)
+          f = resize_image(f, target_w, target_h, maintain_aspect_str == "true")
           resized_frames.append(f)
         img = resized_frames[0]
       else:
-        img = resize_image(img, target_w, target_h, maintain_aspect)
+        img = resize_image(img, target_w, target_h, maintain_aspect_str == "true")
 
       img_io = io.BytesIO()
       if target_format == "GIF":
@@ -266,9 +294,14 @@ def convert_files():
 
     except Exception as e:
       print(f"Error processing {file.filename}: {e}")
+      errors.append(f"{file.filename}: {str(e)}")
 
   CONVERTED_STORAGE[session_id] = converted_files
-  return jsonify({"session_id": session_id, "files": list(converted_files.keys())})
+  return jsonify({
+      "session_id": session_id,
+      "files": list(converted_files.keys()),
+      "errors": errors,
+  })
 
 
 @app.route("/download/<session_id>/<filename>", methods=["GET"])
