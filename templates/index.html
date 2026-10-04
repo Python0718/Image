@@ -9,14 +9,18 @@
         .card { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         .form-group { margin: 20px 0; text-align: left; }
         label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input[type="file"], input[type="number"], select { width: 100%; padding: 10px; box-sizing: border-box; border-radius: 4px; border: 1px solid #ccc; font-size: 16px; }
-        .size-inputs { display: flex; gap: 15px; }
-        .size-inputs > div { flex: 1; }
-        .checkbox-group { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 14px; font-weight: normal; cursor: pointer; }
-        .checkbox-group input { width: auto; cursor: pointer; }
-        button { background: #4CAF50; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 4px; cursor: pointer; width: 100%; margin-top: 10px; }
+        input[type="number"], select { width: 100%; padding: 10px; box-sizing: border-box; border-radius: 4px; border: 1px solid #ccc; font-size: 16px; }
+        input[type="file"] { width: 100%; padding: 10px; box-sizing: border-box; }
+        
+        .size-box { background: #f0f4f8; padding: 15px; border-radius: 6px; margin-top: 10px; display: none; }
+        .input-row { display: flex; gap: 10px; margin-top: 10px; }
+        .input-row > div { flex: 1; }
+        .input-row label { font-size: 13px; color: #555; }
+        
+        button { background: #4CAF50; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 4px; cursor: pointer; width: 100%; margin-top: 15px; }
         button:hover { background: #45a049; }
         button:disabled { background: #ccc; cursor: not-allowed; }
+        
         .result-list { margin-top: 20px; text-align: left; border-top: 1px solid #eee; padding-top: 15px; }
         .file-item { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; background: #f1f1f1; padding: 10px 14px; border-radius: 4px; }
         .download-btn { background: #008CBA; color: white; padding: 6px 14px; text-decoration: none; border-radius: 4px; font-size: 14px; }
@@ -48,22 +52,52 @@
             </div>
 
             <div class="form-group">
-                <label>サイズ変更 (任意 / 未入力なら元のサイズ):</label>
-                <div class="size-inputs">
-                    <div>
-                        <input type="number" name="width" min="1" placeholder="幅 (px) 例: 1920">
-                    </div>
-                    <div>
-                        <input type="number" name="height" min="1" placeholder="高さ (px) 例: 1080">
+                <label>サイズ変更モード:</label>
+                <select id="sizeMode">
+                    <option value="none">なし（元のサイズを維持）</option>
+                    <option value="aspect">アスペクト比で指定</option>
+                    <option value="manual">手入力（自由指定）</option>
+                </select>
+
+                <!-- アスペクト比指定モードの設定エリア -->
+                <div id="aspectArea" class="size-box">
+                    <label>アスペクト比（横 : 縦）:</label>
+                    <select id="aspectRatio">
+                        <option value="16:9">16 : 9 (横長 - YouTube/PC)</option>
+                        <option value="4:3">4 : 3 (標準 - デジカメ)</option>
+                        <option value="1:1">1 : 1 (正方形 - Instagram等)</option>
+                        <option value="9:16">9 : 16 (縦長 - スマホ/リール)</option>
+                        <option value="3:4">3 : 4 (縦長標準)</option>
+                    </select>
+                    
+                    <div class="input-row">
+                        <div>
+                            <label>指定する横幅 (px):</label>
+                            <input type="number" id="aspectWidth" min="1" placeholder="例: 1920">
+                        </div>
+                        <div>
+                            <label>自動計算された高さ (px):</label>
+                            <input type="number" id="aspectHeight" readonly style="background: #e9e9e9; cursor: not-allowed;" placeholder="自動計算">
+                        </div>
                     </div>
                 </div>
-                <label class="checkbox-group">
-                    <input type="checkbox" name="maintain_aspect" value="true" checked>
-                    縦横比（アスペクト比）を維持する
-                </label>
+
+                <!-- 手入力モードの設定エリア -->
+                <div id="manualArea" class="size-box">
+                    <div class="input-row">
+                        <div>
+                            <label>横幅 (px):</label>
+                            <input type="number" id="manualWidth" min="1" placeholder="例: 1200">
+                        </div>
+                        <div>
+                            <label>高さ (px):</label>
+                            <input type="number" id="manualHeight" min="1" placeholder="例: 800">
+                        </div>
+                    </div>
+                </div>
             </div>
 
-            <button type="submit" id="submitBtn">変換・リサイズ実行</button>
+            <button type="submit" id="submitBtn">変換・サイズ変更実行</button>
         </form>
 
         <div id="loading" class="loading">⏳ 処理中... しばらくお待ちください</div>
@@ -75,6 +109,42 @@
     </div>
 
     <script>
+        const sizeMode = document.getElementById('sizeMode');
+        const aspectArea = document.getElementById('aspectArea');
+        const manualArea = document.getElementById('manualArea');
+        const aspectRatio = document.getElementById('aspectRatio');
+        const aspectWidth = document.getElementById('aspectWidth');
+        const aspectHeight = document.getElementById('aspectHeight');
+
+        // モード切替イベント
+        sizeMode.addEventListener('change', () => {
+            aspectArea.style.display = 'none';
+            manualArea.style.display = 'none';
+
+            if (sizeMode.value === 'aspect') {
+                aspectArea.style.display = 'block';
+            } else if (sizeMode.value === 'manual') {
+                manualArea.style.display = 'block';
+            }
+        });
+
+        // アスペクト比から高さを自動計算する関数
+        function calculateHeight() {
+            const widthVal = parseFloat(aspectWidth.value);
+            if (!widthVal || widthVal <= 0) {
+                aspectHeight.value = '';
+                return;
+            }
+
+            const [ratioW, ratioH] = aspectRatio.value.split(':').map(Number);
+            const calculatedH = Math.round((widthVal * ratioH) / ratioW);
+            aspectHeight.value = calculatedH;
+        }
+
+        aspectWidth.addEventListener('input', calculateHeight);
+        aspectRatio.addEventListener('change', calculateHeight);
+
+        // フォーム送信処理
         document.getElementById('convertForm').addEventListener('submit', async (e) => {
             e.preventDefault();
 
@@ -85,9 +155,23 @@
 
             const formData = new FormData(e.target);
 
-            // チェックボックスがオフの場合は false を送る補正
-            if (!e.target.maintain_aspect.checked) {
+            // モードに応じた width / height パラメータの設定
+            const mode = sizeMode.value;
+            if (mode === 'aspect') {
+                if (aspectWidth.value) formData.set('width', aspectWidth.value);
+                if (aspectHeight.value) formData.set('height', aspectHeight.value);
+                formData.set('maintain_aspect', 'false'); // アスペクト比に合わせて計算済みのため強制サイズ指定
+            } else if (mode === 'manual') {
+                const manualW = document.getElementById('manualWidth').value;
+                const manualH = document.getElementById('manualHeight').value;
+                if (manualW) formData.set('width', manualW);
+                if (manualH) formData.set('height', manualH);
                 formData.set('maintain_aspect', 'false');
+            } else {
+                // なし（元のサイズを維持）
+                formData.delete('width');
+                formData.delete('height');
+                formData.set('maintain_aspect', 'true');
             }
 
             submitBtn.disabled = true;
