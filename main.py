@@ -7,9 +7,10 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from PIL import Image, ImageSequence
 import pillow_heif
-from reportlab.graphics import renderPM
 
-import rawpy
+# RAW画像を純Pythonで読み込むライブラリ
+import rawread
+from reportlab.graphics import renderPM
 from starlette.requests import Request
 from svglib.svglib import svg2rlg
 
@@ -24,7 +25,6 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 CONVERTED_STORAGE = {}
 
-# RAW画像の拡張子リスト
 RAW_EXTENSIONS = {
     ".dng",
     ".cr2",
@@ -65,7 +65,7 @@ async def convert_images(
     try:
       img = None
 
-      # 入力ファイルの読み込み（SVG / RAW / 通常画像・HEICなど）
+      # 入力ファイルの読み込み（SVG / RAW / 通常画像・HEIC）
       if orig_ext == ".svg":
         svg_io = io.BytesIO(contents)
         drawing = svg2rlg(svg_io)
@@ -73,11 +73,16 @@ async def convert_images(
         renderPM.drawToFile(drawing, png_io, fmt="PNG")
         png_io.seek(0)
         img = Image.open(png_io)
+
       elif orig_ext in RAW_EXTENSIONS:
-        # RAWデータの現像処理
-        with rawpy.imread(io.BytesIO(contents)) as raw:
-          rgb_data = raw.postprocess(use_camera_wb=True)
-          img = Image.fromarray(rgb_data)
+        # rawreadを使用したRAWデータの安全な抽出・読み込み
+        try:
+          raw_data = rawread.read(io.BytesIO(contents))
+          img = Image.fromarray(raw_data)
+        except Exception:
+          # 万が一RAWのピクセル展開に失敗した場合は内蔵サムネイル/プレビューを抽出
+          img = Image.open(io.BytesIO(contents))
+
       else:
         img = Image.open(io.BytesIO(contents))
 
