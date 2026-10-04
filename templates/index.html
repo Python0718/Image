@@ -3,10 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>画像形式・サイズ変換ツール</title>
+    <title>画像・動画 形式＆サイズ変換ツール</title>
     <style>
         body { font-family: sans-serif; max-width: 650px; margin: 40px auto; padding: 20px; text-align: center; background: #f9f9f9; }
         .card { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        
+        /* タブ切り替えのスタイル */
+        .tab-container { display: flex; margin-bottom: 25px; border-bottom: 2px solid #ddd; }
+        .tab-btn { flex: 1; padding: 12px; background: none; border: none; font-size: 16px; font-weight: bold; cursor: pointer; color: #777; transition: 0.2s; }
+        .tab-btn.active { color: #4CAF50; border-bottom: 3px solid #4CAF50; margin-bottom: -2px; }
+
         .form-group { margin: 20px 0; text-align: left; }
         label { display: block; margin-bottom: 5px; font-weight: bold; }
         input[type="number"], select { width: 100%; padding: 10px; box-sizing: border-box; border-radius: 4px; border: 1px solid #ccc; font-size: 16px; }
@@ -17,40 +23,69 @@
         .input-row > div { flex: 1; }
         .input-row label { font-size: 13px; color: #555; }
         
-        button { background: #4CAF50; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 4px; cursor: pointer; width: 100%; margin-top: 15px; }
-        button:hover { background: #45a049; }
-        button:disabled { background: #ccc; cursor: not-allowed; }
+        button[type="submit"] { background: #4CAF50; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 4px; cursor: pointer; width: 100%; margin-top: 15px; }
+        button[type="submit"]:hover { background: #45a049; }
+        button[type="submit"]:disabled { background: #ccc; cursor: not-allowed; }
         
         .result-list { margin-top: 20px; text-align: left; border-top: 1px solid #eee; padding-top: 15px; }
         .file-item { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; background: #f1f1f1; padding: 10px 14px; border-radius: 4px; }
         .download-btn { background: #008CBA; color: white; padding: 6px 14px; text-decoration: none; border-radius: 4px; font-size: 14px; }
         .download-btn:hover { background: #007399; }
         .loading { display: none; margin-top: 15px; color: #666; font-weight: bold; }
+        .section-panel { display: none; }
+        .section-panel.active { display: block; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h2>画像形式・サイズ変換ツール</h2>
+        <h2>メディア変換・サイズ変更ツール</h2>
+
+        <!-- 一番上の Video / Image 切り替えタブ -->
+        <div class="tab-container">
+            <button type="button" class="tab-btn active" onclick="switchTab('image')">🖼️ Image (画像)</button>
+            <button type="button" class="tab-btn" onclick="switchTab('video')">🎬 Video (動画)</button>
+        </div>
+
         <form id="convertForm">
-            <div class="form-group">
-                <label>画像ファイルを選択 (RAW, HEIC, SVG, GIF等に対応):</label>
-                <input type="file" name="files" multiple required accept="image/*,.heic,.heif,.avif,.svg,.ico,.dng,.cr2,.cr3,.nef,.arw">
+            <!-- 画像用パネル -->
+            <div id="imagePanel" class="section-panel active">
+                <div class="form-group">
+                    <label>画像ファイルを選択 (RAW, HEIC, SVG, GIF等対応):</label>
+                    <input type="file" name="image_files" id="imageInput" multiple accept="image/*,.heic,.heif,.avif,.svg,.ico,.dng,.cr2,.cr3,.nef,.arw">
+                </div>
+                <div class="form-group">
+                    <label>変換後の形式:</label>
+                    <select name="target_format_image">
+                        <option value="JPEG">JPEG (.jpg)</option>
+                        <option value="PNG">PNG (.png)</option>
+                        <option value="WEBP">WEBP (.webp)</option>
+                        <option value="GIF">GIF (.gif)</option>
+                        <option value="AVIF">AVIF (.avif)</option>
+                        <option value="HEIC">HEIC (.heic)</option>
+                        <option value="ICO">ICO (.ico)</option>
+                        <option value="SVG">SVG (.svg)</option>
+                    </select>
+                </div>
             </div>
 
-            <div class="form-group">
-                <label>変換後の形式:</label>
-                <select name="target_format">
-                    <option value="JPEG">JPEG (.jpg)</option>
-                    <option value="PNG">PNG (.png)</option>
-                    <option value="WEBP">WEBP (.webp)</option>
-                    <option value="GIF">GIF (.gif)</option>
-                    <option value="AVIF">AVIF (.avif)</option>
-                    <option value="HEIC">HEIC (.heic)</option>
-                    <option value="ICO">ICO (.ico)</option>
-                    <option value="SVG">SVG (.svg)</option>
-                </select>
+            <!-- 動画用パネル -->
+            <div id="videoPanel" class="section-panel">
+                <div class="form-group">
+                    <label>動画ファイルを選択 (MP4, MOV, WebM, M3U8等):</label>
+                    <input type="file" name="video_files" id="videoInput" multiple accept="video/*,.mp4,.mov,.webm,.mkv,.m4v">
+                </div>
+                <div class="form-group">
+                    <label>変換後の形式:</label>
+                    <select name="target_format_video">
+                        <option value="MP4">MP4 (.mp4)</option>
+                        <option value="WEBM">WEBM (.webm)</option>
+                        <option value="MOV">MOV (.mov)</option>
+                        <option value="M3U8">M3U8 (HLS配信形式 / .zip)</option>
+                    </select>
+                </div>
             </div>
 
+            <!-- 共通のサイズ変更設定 -->
             <div class="form-group">
                 <label>サイズ変更モード:</label>
                 <select id="sizeMode">
@@ -59,13 +94,13 @@
                     <option value="manual">手入力（自由指定）</option>
                 </select>
 
-                <!-- アスペクト比指定モードの設定エリア -->
+                <!-- アスペクト比指定エリア -->
                 <div id="aspectArea" class="size-box">
                     <label>アスペクト比（横 : 縦）:</label>
                     <select id="aspectRatio">
                         <option value="16:9">16 : 9 (横長 - YouTube/PC)</option>
                         <option value="4:3">4 : 3 (標準 - デジカメ)</option>
-                        <option value="1:1">1 : 1 (正方形 - Instagram等)</option>
+                        <option value="1:1">1 : 1 (正方形 - SNS等)</option>
                         <option value="9:16">9 : 16 (縦長 - スマホ/リール)</option>
                         <option value="3:4">3 : 4 (縦長標準)</option>
                     </select>
@@ -82,7 +117,7 @@
                     </div>
                 </div>
 
-                <!-- 手入力モードの設定エリア -->
+                <!-- 手入力エリア -->
                 <div id="manualArea" class="size-box">
                     <div class="input-row">
                         <div>
@@ -109,6 +144,27 @@
     </div>
 
     <script>
+        let currentTab = 'image';
+
+        function switchTab(tab) {
+            currentTab = tab;
+            const buttons = document.querySelectorAll('.tab-btn');
+            buttons.forEach(btn => btn.classList.remove('active'));
+
+            document.getElementById('imagePanel').classList.remove('active');
+            document.getElementById('videoPanel').classList.remove('active');
+
+            if (tab === 'image') {
+                buttons[0].classList.add('active');
+                document.getElementById('imagePanel').classList.add('active');
+                document.getElementById('videoInput').value = ''; // 反対側の選択をクリア
+            } else {
+                buttons[1].classList.add('active');
+                document.getElementById('videoPanel').classList.add('active');
+                document.getElementById('imageInput').value = ''; // 反対側の選択をクリア
+            }
+        }
+
         const sizeMode = document.getElementById('sizeMode');
         const aspectArea = document.getElementById('aspectArea');
         const manualArea = document.getElementById('manualArea');
@@ -116,7 +172,6 @@
         const aspectWidth = document.getElementById('aspectWidth');
         const aspectHeight = document.getElementById('aspectHeight');
 
-        // モード切替イベント
         sizeMode.addEventListener('change', () => {
             aspectArea.style.display = 'none';
             manualArea.style.display = 'none';
@@ -128,23 +183,19 @@
             }
         });
 
-        // アスペクト比から高さを自動計算する関数
         function calculateHeight() {
             const widthVal = parseFloat(aspectWidth.value);
             if (!widthVal || widthVal <= 0) {
                 aspectHeight.value = '';
                 return;
             }
-
             const [ratioW, ratioH] = aspectRatio.value.split(':').map(Number);
-            const calculatedH = Math.round((widthVal * ratioH) / ratioW);
-            aspectHeight.value = calculatedH;
+            aspectHeight.value = Math.round((widthVal * ratioH) / ratioW);
         }
 
         aspectWidth.addEventListener('input', calculateHeight);
         aspectRatio.addEventListener('change', calculateHeight);
 
-        // フォーム送信処理
         document.getElementById('convertForm').addEventListener('submit', async (e) => {
             e.preventDefault();
 
@@ -153,14 +204,32 @@
             const resultContainer = document.getElementById('resultContainer');
             const fileList = document.getElementById('fileList');
 
-            const formData = new FormData(e.target);
+            const formData = new FormData();
 
-            // モードに応じた width / height パラメータの設定
+            // タブに応じてファイルとフォーマットを取得
+            let targetFormat = '';
+            if (currentTab === 'image') {
+                const imageFiles = document.getElementById('imageInput').files;
+                for (let i = 0; i < imageFiles.length; i++) {
+                    formData.append('files', imageFiles[i]);
+                }
+                targetFormat = document.querySelector('[name="target_format_image"]').value;
+            } else {
+                const videoFiles = document.getElementById('videoInput').files;
+                for (let i = 0; i < videoFiles.length; i++) {
+                    formData.append('files', videoFiles[i]);
+                }
+                targetFormat = document.querySelector('[name="target_format_video"]').value;
+            }
+
+            formData.set('target_format', targetFormat);
+
+            // サイズ変更モードのパラメータ設定
             const mode = sizeMode.value;
             if (mode === 'aspect') {
                 if (aspectWidth.value) formData.set('width', aspectWidth.value);
                 if (aspectHeight.value) formData.set('height', aspectHeight.value);
-                formData.set('maintain_aspect', 'false'); // アスペクト比に合わせて計算済みのため強制サイズ指定
+                formData.set('maintain_aspect', 'false');
             } else if (mode === 'manual') {
                 const manualW = document.getElementById('manualWidth').value;
                 const manualH = document.getElementById('manualHeight').value;
@@ -168,9 +237,6 @@
                 if (manualH) formData.set('height', manualH);
                 formData.set('maintain_aspect', 'false');
             } else {
-                // なし（元のサイズを維持）
-                formData.delete('width');
-                formData.delete('height');
                 formData.set('maintain_aspect', 'true');
             }
 
@@ -185,9 +251,7 @@
                     body: formData
                 });
 
-                if (!response.ok) {
-                    throw new Error('変換処理に失敗しました');
-                }
+                if (!response.ok) throw new Error('変換処理に失敗しました');
 
                 const data = await response.json();
                 
