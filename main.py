@@ -34,7 +34,6 @@ def resize_image(
     target_height: int | None,
     maintain_aspect: bool,
 ) -> Image.Image:
-  """画像をリサイズするヘルパー関数"""
   if not target_width and not target_height:
     return img
 
@@ -98,7 +97,6 @@ def convert_images():
     try:
       img = None
 
-      # 1. 画像読み込み
       if orig_ext == ".svg":
         svg_io = io.BytesIO(contents)
         drawing = svg2rlg(svg_io)
@@ -120,7 +118,6 @@ def convert_images():
       else:
         img = Image.open(io.BytesIO(contents))
 
-      # 2. リサイズ処理
       if hasattr(img, "n_frames") and img.n_frames > 1:
         resized_frames = []
         for frame in ImageSequence.Iterator(img):
@@ -131,7 +128,6 @@ def convert_images():
       else:
         img = resize_image(img, target_w, target_h, maintain_aspect)
 
-      # 3. フォーマット変換・保存
       if target_format == "SVG":
         temp_png = io.BytesIO()
         img.save(temp_png, format="PNG")
@@ -228,4 +224,5 @@ def download_file(session_id: str, filename: str):
 
 
 if __name__ == "__main__":
-  app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+  port = int(os.environ.get("PORT", 10000))
+  app.run(host="0.0.0.0", port=port)
