@@ -5,3 +5,6 @@ python-multipart
 jinja2
 svglib
 pillow-heif
+setuptools
+wheel
+rawpy
