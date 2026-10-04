@@ -1,7 +1,9 @@
 import base64
 import io
 import os
+from typing import Optional
 import uuid
+
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
@@ -34,6 +36,40 @@ RAW_EXTENSIONS = {
 }
 
 
+def resize_image(
+    img: Image.Image,
+    target_width: Optional[int],
+    target_height: Optional[int],
+    maintain_aspect: bool,
+) -> Image.Image:
+  """画像をリサイズするヘルパー関数"""
+  if not target_width and not target_height:
+    return img
+
+  orig_w, orig_h = img.size
+
+  if maintain_aspect:
+    if target_width and target_height:
+      # 両方指定された場合は、枠内に収まるよう縦横比を維持して縮小/拡大
+      img.thumbnail((target_width, target_height), Image.Resampling.LANCZOS)
+      return img
+    elif target_width:
+      new_w = target_width
+      new_h = int(orig_h * (target_width / orig_w))
+    elif target_height:
+      new_h = target_height
+      new_w = int(orig_w * (target_height / orig_h))
+  else:
+    new_w = target_width if target_width else orig_w
+    new_h = target_height if target_height else orig_h
+
+  # 1px未満にならないよう安全策
+  new_w = max(1, new_w)
+  new_h = max(1, new_h)
+
+  return img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
   template = templates.get_template("index.html")
@@ -42,11 +78,19 @@ def index(request: Request):
 
 @app.post("/convert/")
 async def convert_images(
-    files: list[UploadFile] = File(...), target_format: str = Form(...)
+    files: list[UploadFile] = File(...),
+    target_format: str = Form(...),
+    width: Optional[str] = Form(None),
+    height: Optional[str] = Form(None),
+    maintain_aspect: bool = Form(False),
 ):
   target_format = target_format.upper()
   session_id = str(uuid.uuid4())
   converted_files = {}
+
+  # 数値への変換（空文字列や不正値の処理）
+  target_w = int(width) if width and width.strip().isdigit() else None
+  target_h = int(height) if height and height.strip().isdigit() else None
 
   for file in files:
     contents = await file.read()
@@ -58,6 +102,7 @@ async def convert_images(
     try:
       img = None
 
+      # 1. 画像の読み込み
       if orig_ext == ".svg":
         svg_io = io.BytesIO(contents)
         drawing = svg2rlg(svg_io)
@@ -79,16 +124,27 @@ async def convert_images(
       else:
         img = Image.open(io.BytesIO(contents))
 
+      # 2. リサイズ処理（多重フレーム対応）
+      if hasattr(img, "n_frames") and img.n_frames > 1:
+        resized_frames = []
+        for frame in ImageSequence.Iterator(img):
+          f = frame.copy()
+          f = resize_image(f, target_w, target_h, maintain_aspect)
+          resized_frames.append(f)
+        # 代表フレームとして先頭を設定
+        img = resized_frames[0]
+      else:
+        img = resize_image(img, target_w, target_h, maintain_aspect)
+
+      # 3. 出力フォーマット別の保存処理
       if target_format == "SVG":
         temp_png = io.BytesIO()
-        if hasattr(img, "n_frames") and img.n_frames > 1:
-          img.seek(0)
         img.save(temp_png, format="PNG")
         img_bytes = temp_png.getvalue()
-        width, height = img.size
+        w, h = img.size
         b64_data = base64.b64encode(img_bytes).decode("utf-8")
-        svg_content = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
-    <image href="data:image/png;base64,{b64_data}" width="{width}" height="{height}"/>
+        svg_content = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">
+    <image href="data:image/png;base64,{b64_data}" width="{w}" height="{h}"/>
 </svg>'''
         converted_files[new_filename] = svg_content.encode("utf-8")
         continue
@@ -96,13 +152,12 @@ async def convert_images(
       img_io = io.BytesIO()
 
       if target_format == "GIF":
-        if hasattr(img, "n_frames") and img.n_frames > 1:
-          frames = [frame.copy() for frame in ImageSequence.Iterator(img)]
-          frames[0].save(
+        if "resized_frames" in locals() and len(resized_frames) > 1:
+          resized_frames[0].save(
               img_io,
               format="GIF",
               save_all=True,
-              append_images=frames[1:],
+              append_images=resized_frames[1:],
               loop=0,
           )
         else:
@@ -146,7 +201,6 @@ async def convert_images(
 
   CONVERTED_STORAGE[session_id] = converted_files
 
-  # JSONでレスポンスを返します
   return {"session_id": session_id, "files": list(converted_files.keys())}
 
 
