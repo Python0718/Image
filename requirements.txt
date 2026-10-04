@@ -1,7 +1,9 @@
 flask
-gunicorn
 pillow
 pillow-heif
 pillow-avif-plugin
 svglib
 reportlab
+imageio
+imageio-ffmpeg
+ffmpeg-python
