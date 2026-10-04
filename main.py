@@ -1,25 +1,17 @@
 import base64
 import io
 import os
-from typing import Optional
 import uuid
-
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, StreamingResponse
-from fastapi.templating import Jinja2Templates
+from flask import Flask, jsonify, render_template, request, send_file
 from PIL import Image, ImageSequence
 import pillow_heif
 from reportlab.graphics import renderPM
-from starlette.requests import Request
 from svglib.svglib import svg2rlg
 
 # HEIF / HEIC プラグイン登録
 pillow_heif.register_heif_opener()
 
-app = FastAPI()
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
+app = Flask(__name__)
 
 CONVERTED_STORAGE = {}
 
@@ -38,8 +30,8 @@ RAW_EXTENSIONS = {
 
 def resize_image(
     img: Image.Image,
-    target_width: Optional[int],
-    target_height: Optional[int],
+    target_width: int | None,
+    target_height: int | None,
     maintain_aspect: bool,
 ) -> Image.Image:
   """画像をリサイズするヘルパー関数"""
@@ -50,7 +42,6 @@ def resize_image(
 
   if maintain_aspect:
     if target_width and target_height:
-      # 両方指定された場合は、枠内に収まるよう縦横比を維持して縮小/拡大
       img.thumbnail((target_width, target_height), Image.Resampling.LANCZOS)
       return img
     elif target_width:
@@ -63,37 +54,42 @@ def resize_image(
     new_w = target_width if target_width else orig_w
     new_h = target_height if target_height else orig_h
 
-  # 1px未満にならないよう安全策
   new_w = max(1, new_w)
   new_h = max(1, new_h)
 
   return img.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
 
-@app.get("/", response_class=HTMLResponse)
-def index(request: Request):
-  template = templates.get_template("index.html")
-  return HTMLResponse(content=template.render({"request": request}))
+@app.route("/", methods=["GET"])
+def index():
+  return render_template("index.html")
 
 
-@app.post("/convert/")
-async def convert_images(
-    files: list[UploadFile] = File(...),
-    target_format: str = Form(...),
-    width: Optional[str] = Form(None),
-    height: Optional[str] = Form(None),
-    maintain_aspect: bool = Form(False),
-):
-  target_format = target_format.upper()
+@app.route("/convert/", methods=["POST"])
+def convert_images():
+  target_format = request.form.get("target_format", "JPEG").upper()
   session_id = str(uuid.uuid4())
   converted_files = {}
 
-  # 数値への変換（空文字列や不正値の処理）
-  target_w = int(width) if width and width.strip().isdigit() else None
-  target_h = int(height) if height and height.strip().isdigit() else None
+  width_str = request.form.get("width")
+  height_str = request.form.get("height")
+  maintain_aspect_str = request.form.get("maintain_aspect", "true")
+
+  target_w = (
+      int(width_str) if width_str and width_str.strip().isdigit() else None
+  )
+  target_h = (
+      int(height_str) if height_str and height_str.strip().isdigit() else None
+  )
+  maintain_aspect = maintain_aspect_str.lower() == "true"
+
+  files = request.files.getlist("files")
 
   for file in files:
-    contents = await file.read()
+    if not file.filename:
+      continue
+
+    contents = file.read()
     orig_name, orig_ext = os.path.splitext(file.filename)
     orig_ext = orig_ext.lower()
     ext = f".{target_format.lower()}"
@@ -102,7 +98,7 @@ async def convert_images(
     try:
       img = None
 
-      # 1. 画像の読み込み
+      # 1. 画像読み込み
       if orig_ext == ".svg":
         svg_io = io.BytesIO(contents)
         drawing = svg2rlg(svg_io)
@@ -124,19 +120,18 @@ async def convert_images(
       else:
         img = Image.open(io.BytesIO(contents))
 
-      # 2. リサイズ処理（多重フレーム対応）
+      # 2. リサイズ処理
       if hasattr(img, "n_frames") and img.n_frames > 1:
         resized_frames = []
         for frame in ImageSequence.Iterator(img):
           f = frame.copy()
           f = resize_image(f, target_w, target_h, maintain_aspect)
           resized_frames.append(f)
-        # 代表フレームとして先頭を設定
         img = resized_frames[0]
       else:
         img = resize_image(img, target_w, target_h, maintain_aspect)
 
-      # 3. 出力フォーマット別の保存処理
+      # 3. フォーマット変換・保存
       if target_format == "SVG":
         temp_png = io.BytesIO()
         img.save(temp_png, format="PNG")
@@ -201,16 +196,16 @@ async def convert_images(
 
   CONVERTED_STORAGE[session_id] = converted_files
 
-  return {"session_id": session_id, "files": list(converted_files.keys())}
+  return jsonify({"session_id": session_id, "files": list(converted_files.keys())})
 
 
-@app.get("/download/{session_id}/{filename}")
+@app.route("/download/<session_id>/<filename>", methods=["GET"])
 def download_file(session_id: str, filename: str):
   if (
       session_id not in CONVERTED_STORAGE
       or filename not in CONVERTED_STORAGE[session_id]
   ):
-    raise HTTPException(status_code=404, detail="File not found")
+    return "File not found", 404
 
   file_data = CONVERTED_STORAGE[session_id][filename]
   ext = os.path.splitext(filename)[1].lower()
@@ -224,8 +219,13 @@ def download_file(session_id: str, filename: str):
   }
   media_type = media_types.get(ext, "application/octet-stream")
 
-  return StreamingResponse(
+  return send_file(
       io.BytesIO(file_data),
-      media_type=media_type,
-      headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+      mimetype=media_type,
+      as_attachment=True,
+      download_name=filename,
   )
+
+
+if __name__ == "__main__":
+  app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
