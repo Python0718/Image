@@ -7,13 +7,13 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from PIL import Image, ImageSequence
 import pillow_heif
+import pillow_avif  # AVIFプラグインの自動登録
 from reportlab.graphics import renderPM
 from starlette.requests import Request
 from svglib.svglib import svg2rlg
 
-# HEIF / HEIC / AVIF のプラグイン登録
+# HEIF / HEIC のプラグイン登録のみ行う（AVIFは上のimportで自動登録されます）
 pillow_heif.register_heif_opener()
-pillow_heif.register_avif_opener()
 
 app = FastAPI()
 
