@@ -20,7 +20,8 @@
         <form action="/convert/" method="post" enctype="multipart/form-data">
             <div class="form-group">
                 <label>画像ファイルを選択 (複数選択可):</label>
-                <input type="file" name="files" multiple required accept="image/*">
+                <!-- SVGやICOも選択できるように拡張 -->
+                <input type="file" name="files" multiple required accept="image/*,.svg,.ico">
             </div>
             <div class="form-group">
                 <label>変換後の形式:</label>
@@ -28,6 +29,7 @@
                     <option value="JPEG">JPEG</option>
                     <option value="PNG">PNG</option>
                     <option value="WEBP">WEBP</option>
+                    <option value="ICO">ICO</option>
                 </select>
             </div>
             <button type="submit">一括変換してZIPでダウンロード</button>
