@@ -23,7 +23,8 @@
         <h2>万能画像形式変換ツール</h2>
         <form action="/convert/" method="post" enctype="multipart/form-data">
             <div class="form-group">
-                <label>画像ファイルを選択 (複数可 / HEIC, RAW, SVG, GIF等に対応):</label>
+                <label>画像ファイルを選択 (RAW, HEIC, SVG, GIF等に対応):</label>
+                <!-- RAWファイルの拡張子を受け取るように指定 -->
                 <input type="file" name="files" multiple required accept="image/*,.heic,.heif,.avif,.svg,.ico,.dng,.cr2,.cr3,.nef,.arw">
             </div>
             <div class="form-group">
