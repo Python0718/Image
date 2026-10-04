@@ -2,6 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>画像形式変換ツール</title>
     <style>
         body { font-family: sans-serif; max-width: 650px; margin: 40px auto; padding: 20px; text-align: center; background: #f9f9f9; }
@@ -12,16 +13,18 @@
         select { width: 100%; padding: 10px; border-radius: 4px; border: 1px solid #ccc; font-size: 16px; }
         button { background: #4CAF50; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 4px; cursor: pointer; width: 100%; }
         button:hover { background: #45a049; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
         .result-list { margin-top: 20px; text-align: left; border-top: 1px solid #eee; padding-top: 15px; }
         .file-item { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; background: #f1f1f1; padding: 10px 14px; border-radius: 4px; }
         .download-btn { background: #008CBA; color: white; padding: 6px 14px; text-decoration: none; border-radius: 4px; font-size: 14px; }
         .download-btn:hover { background: #007399; }
+        .loading { display: none; margin-top: 15px; color: #666; font-weight: bold; }
     </style>
 </head>
 <body>
     <div class="card">
         <h2>万能画像形式変換ツール</h2>
-        <form action="/convert/" method="post" enctype="multipart/form-data">
+        <form id="convertForm">
             <div class="form-group">
                 <label>画像ファイルを選択 (RAW, HEIC, SVG, GIF等に対応):</label>
                 <input type="file" name="files" multiple required accept="image/*,.heic,.heif,.avif,.svg,.ico,.dng,.cr2,.cr3,.nef,.arw">
@@ -39,20 +42,64 @@
                     <option value="SVG">SVG (.svg)</option>
                 </select>
             </div>
-            <button type="submit">変換する</button>
+            <button type="submit" id="submitBtn">変換する</button>
         </form>
 
-        {% if files %}
-        <div class="result-list">
+        <div id="loading" class="loading">⏳ 変換処理中... しばらくお待ちください</div>
+
+        <div id="resultContainer" class="result-list" style="display: none;">
             <h3>変換完了ファイル</h3>
-            {% for filename in files %}
-            <div class="file-item">
-                <span>{{ filename }}</span>
-                <a class="download-btn" href="/download/{{ session_id }}/{{ filename }}">ダウンロード</a>
-            </div>
-            {% endfor %}
+            <div id="fileList"></div>
         </div>
-        {% endif %}
     </div>
+
+    <script>
+        document.getElementById('convertForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const submitBtn = document.getElementById('submitBtn');
+            const loading = document.getElementById('loading');
+            const resultContainer = document.getElementById('resultContainer');
+            const fileList = document.getElementById('fileList');
+
+            const formData = new FormData(e.target);
+
+            // ボタン無効化＆ローディング表示
+            submitBtn.disabled = true;
+            loading.style.display = 'block';
+            resultContainer.style.display = 'none';
+            fileList.innerHTML = '';
+
+            try {
+                const response = await fetch('/convert/', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error('変換処理に失敗しました');
+                }
+
+                const data = await response.json();
+                
+                data.files.forEach(filename => {
+                    const item = document.createElement('div');
+                    item.className = 'file-item';
+                    item.innerHTML = `
+                        <span>${filename}</span>
+                        <a class="download-btn" href="/download/${data.session_id}/${filename}">ダウンロード</a>
+                    `;
+                    fileList.appendChild(item);
+                });
+
+                resultContainer.style.display = 'block';
+            } catch (err) {
+                alert('エラーが発生しました: ' + err.message);
+            } finally {
+                submitBtn.disabled = false;
+                loading.style.display = 'none';
+            }
+        });
+    </script>
 </body>
 </html>
