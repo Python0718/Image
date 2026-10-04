@@ -5,15 +5,16 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from PIL import Image
+from reportlab.graphics import renderPM
 from starlette.requests import Request
+from svglib.svglib import svg2rlg
 
 app = FastAPI()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
-# メモリ上で変換済みデータを一時保存する辞書（簡易ストレージ）
-# 構造: { session_id: { filename: bytes } }
+# 一時的なメモリ上ストレージ
 CONVERTED_STORAGE = {}
 
 
@@ -36,12 +37,24 @@ async def convert_images(
 
   for file in files:
     contents = await file.read()
-    orig_name, _ = os.path.splitext(file.filename)
+    orig_name, orig_ext = os.path.splitext(file.filename)
+    orig_ext = orig_ext.lower()
     ext = f".{target_format.lower()}"
     new_filename = orig_name + ext
 
     try:
-      with Image.open(io.BytesIO(contents)) as img:
+      # SVG形式の読み込み処理
+      if orig_ext == ".svg":
+        svg_io = io.BytesIO(contents)
+        drawing = svg2rlg(svg_io)
+        png_io = io.BytesIO()
+        renderPM.drawToFile(drawing, png_io, fmt="PNG")
+        png_io.seek(0)
+        img = Image.open(png_io)
+      else:
+        img = Image.open(io.BytesIO(contents))
+
+      with img:
         # 透過やカラーモードの調整
         if target_format == "JPEG" and img.mode in ("RGBA", "LA", "P"):
           background = Image.new("RGB", img.size, (255, 255, 255))
