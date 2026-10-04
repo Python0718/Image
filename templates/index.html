@@ -3,15 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>画像形式変換ツール</title>
+    <title>画像形式・サイズ変換ツール</title>
     <style>
         body { font-family: sans-serif; max-width: 650px; margin: 40px auto; padding: 20px; text-align: center; background: #f9f9f9; }
         .card { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         .form-group { margin: 20px 0; text-align: left; }
         label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input[type="file"] { width: 100%; padding: 10px; box-sizing: border-box; }
-        select { width: 100%; padding: 10px; border-radius: 4px; border: 1px solid #ccc; font-size: 16px; }
-        button { background: #4CAF50; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 4px; cursor: pointer; width: 100%; }
+        input[type="file"], input[type="number"], select { width: 100%; padding: 10px; box-sizing: border-box; border-radius: 4px; border: 1px solid #ccc; font-size: 16px; }
+        .size-inputs { display: flex; gap: 15px; }
+        .size-inputs > div { flex: 1; }
+        .checkbox-group { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 14px; font-weight: normal; cursor: pointer; }
+        .checkbox-group input { width: auto; cursor: pointer; }
+        button { background: #4CAF50; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 4px; cursor: pointer; width: 100%; margin-top: 10px; }
         button:hover { background: #45a049; }
         button:disabled { background: #ccc; cursor: not-allowed; }
         .result-list { margin-top: 20px; text-align: left; border-top: 1px solid #eee; padding-top: 15px; }
@@ -23,12 +26,13 @@
 </head>
 <body>
     <div class="card">
-        <h2>万能画像形式変換ツール</h2>
+        <h2>画像形式・サイズ変換ツール</h2>
         <form id="convertForm">
             <div class="form-group">
                 <label>画像ファイルを選択 (RAW, HEIC, SVG, GIF等に対応):</label>
                 <input type="file" name="files" multiple required accept="image/*,.heic,.heif,.avif,.svg,.ico,.dng,.cr2,.cr3,.nef,.arw">
             </div>
+
             <div class="form-group">
                 <label>変換後の形式:</label>
                 <select name="target_format">
@@ -42,10 +46,27 @@
                     <option value="SVG">SVG (.svg)</option>
                 </select>
             </div>
-            <button type="submit" id="submitBtn">変換する</button>
+
+            <div class="form-group">
+                <label>サイズ変更 (任意 / 未入力なら元のサイズ):</label>
+                <div class="size-inputs">
+                    <div>
+                        <input type="number" name="width" min="1" placeholder="幅 (px) 例: 1920">
+                    </div>
+                    <div>
+                        <input type="number" name="height" min="1" placeholder="高さ (px) 例: 1080">
+                    </div>
+                </div>
+                <label class="checkbox-group">
+                    <input type="checkbox" name="maintain_aspect" value="true" checked>
+                    縦横比（アスペクト比）を維持する
+                </label>
+            </div>
+
+            <button type="submit" id="submitBtn">変換・リサイズ実行</button>
         </form>
 
-        <div id="loading" class="loading">⏳ 変換処理中... しばらくお待ちください</div>
+        <div id="loading" class="loading">⏳ 処理中... しばらくお待ちください</div>
 
         <div id="resultContainer" class="result-list" style="display: none;">
             <h3>変換完了ファイル</h3>
@@ -64,7 +85,11 @@
 
             const formData = new FormData(e.target);
 
-            // ボタン無効化＆ローディング表示
+            // チェックボックスがオフの場合は false を送る補正
+            if (!e.target.maintain_aspect.checked) {
+                formData.set('maintain_aspect', 'false');
+            }
+
             submitBtn.disabled = true;
             loading.style.display = 'block';
             resultContainer.style.display = 'none';
