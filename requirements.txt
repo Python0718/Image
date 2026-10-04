@@ -5,4 +5,3 @@ python-multipart
 jinja2
 svglib
 pillow-heif
-rawread
