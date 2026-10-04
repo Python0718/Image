@@ -8,7 +8,6 @@
         body { font-family: sans-serif; max-width: 650px; margin: 40px auto; padding: 20px; text-align: center; background: #f9f9f9; }
         .card { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         
-        /* タブ切り替えのスタイル */
         .tab-container { display: flex; margin-bottom: 25px; border-bottom: 2px solid #ddd; }
         .tab-btn { flex: 1; padding: 12px; background: none; border: none; font-size: 16px; font-weight: bold; cursor: pointer; color: #777; transition: 0.2s; }
         .tab-btn.active { color: #4CAF50; border-bottom: 3px solid #4CAF50; margin-bottom: -2px; }
@@ -27,11 +26,16 @@
         button[type="submit"]:hover { background: #45a049; }
         button[type="submit"]:disabled { background: #ccc; cursor: not-allowed; }
         
+        /* 進行状況（プログレスバー）スタイル */
+        .progress-container { margin-top: 20px; display: none; text-align: left; }
+        .progress-label { font-size: 14px; font-weight: bold; color: #333; margin-bottom: 5px; display: flex; justify-content: space-between; }
+        .progress-bar-bg { width: 100%; background: #e0e0e0; height: 20px; border-radius: 10px; overflow: hidden; }
+        .progress-bar-fill { height: 100%; background: #4CAF50; width: 0%; transition: width 0.3s ease; }
+
         .result-list { margin-top: 20px; text-align: left; border-top: 1px solid #eee; padding-top: 15px; }
         .file-item { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; background: #f1f1f1; padding: 10px 14px; border-radius: 4px; }
         .download-btn { background: #008CBA; color: white; padding: 6px 14px; text-decoration: none; border-radius: 4px; font-size: 14px; }
         .download-btn:hover { background: #007399; }
-        .loading { display: none; margin-top: 15px; color: #666; font-weight: bold; }
         .section-panel { display: none; }
         .section-panel.active { display: block; }
     </style>
@@ -40,14 +44,14 @@
     <div class="card">
         <h2>メディア変換・サイズ変更ツール</h2>
 
-        <!-- 一番上の Video / Image 切り替えタブ -->
+        <!-- タブ切り替え -->
         <div class="tab-container">
             <button type="button" class="tab-btn active" onclick="switchTab('image')">🖼️ Image (画像)</button>
             <button type="button" class="tab-btn" onclick="switchTab('video')">🎬 Video (動画)</button>
         </div>
 
         <form id="convertForm">
-            <!-- 画像用パネル -->
+            <!-- 画像パネル -->
             <div id="imagePanel" class="section-panel active">
                 <div class="form-group">
                     <label>画像ファイルを選択 (RAW, HEIC, SVG, GIF等対応):</label>
@@ -68,7 +72,7 @@
                 </div>
             </div>
 
-            <!-- 動画用パネル -->
+            <!-- 動画パネル -->
             <div id="videoPanel" class="section-panel">
                 <div class="form-group">
                     <label>動画ファイルを選択 (MP4, MOV, WebM, M3U8等):</label>
@@ -85,7 +89,7 @@
                 </div>
             </div>
 
-            <!-- 共通のサイズ変更設定 -->
+            <!-- サイズ変更設定 -->
             <div class="form-group">
                 <label>サイズ変更モード:</label>
                 <select id="sizeMode">
@@ -94,7 +98,6 @@
                     <option value="manual">手入力（自由指定）</option>
                 </select>
 
-                <!-- アスペクト比指定エリア -->
                 <div id="aspectArea" class="size-box">
                     <label>アスペクト比（横 : 縦）:</label>
                     <select id="aspectRatio">
@@ -117,7 +120,6 @@
                     </div>
                 </div>
 
-                <!-- 手入力エリア -->
                 <div id="manualArea" class="size-box">
                     <div class="input-row">
                         <div>
@@ -135,8 +137,18 @@
             <button type="submit" id="submitBtn">変換・サイズ変更実行</button>
         </form>
 
-        <div id="loading" class="loading">⏳ 処理中... しばらくお待ちください</div>
+        <!-- 進行状況エリア -->
+        <div id="progressContainer" class="progress-container">
+            <div class="progress-label">
+                <span id="progressStatus">変換準備中...</span>
+                <span id="progressPercent">0%</span>
+            </div>
+            <div class="progress-bar-bg">
+                <div id="progressBarFill" class="progress-bar-fill"></div>
+            </div>
+        </div>
 
+        <!-- 完了一覧エリア -->
         <div id="resultContainer" class="result-list" style="display: none;">
             <h3>変換完了ファイル</h3>
             <div id="fileList"></div>
@@ -157,11 +169,11 @@
             if (tab === 'image') {
                 buttons[0].classList.add('active');
                 document.getElementById('imagePanel').classList.add('active');
-                document.getElementById('videoInput').value = ''; // 反対側の選択をクリア
+                document.getElementById('videoInput').value = '';
             } else {
                 buttons[1].classList.add('active');
                 document.getElementById('videoPanel').classList.add('active');
-                document.getElementById('imageInput').value = ''; // 反対側の選択をクリア
+                document.getElementById('imageInput').value = '';
             }
         }
 
@@ -200,22 +212,32 @@
             e.preventDefault();
 
             const submitBtn = document.getElementById('submitBtn');
-            const loading = document.getElementById('loading');
+            const progressContainer = document.getElementById('progressContainer');
+            const progressStatus = document.getElementById('progressStatus');
+            const progressPercent = document.getElementById('progressPercent');
+            const progressBarFill = document.getElementById('progressBarFill');
             const resultContainer = document.getElementById('resultContainer');
             const fileList = document.getElementById('fileList');
 
             const formData = new FormData();
 
-            // タブに応じてファイルとフォーマットを取得
             let targetFormat = '';
             if (currentTab === 'image') {
                 const imageFiles = document.getElementById('imageInput').files;
+                if (imageFiles.length === 0) {
+                    alert('画像ファイルを選択してください');
+                    return;
+                }
                 for (let i = 0; i < imageFiles.length; i++) {
                     formData.append('files', imageFiles[i]);
                 }
                 targetFormat = document.querySelector('[name="target_format_image"]').value;
             } else {
                 const videoFiles = document.getElementById('videoInput').files;
+                if (videoFiles.length === 0) {
+                    alert('動画ファイルを選択してください');
+                    return;
+                }
                 for (let i = 0; i < videoFiles.length; i++) {
                     formData.append('files', videoFiles[i]);
                 }
@@ -224,7 +246,6 @@
 
             formData.set('target_format', targetFormat);
 
-            // サイズ変更モードのパラメータ設定
             const mode = sizeMode.value;
             if (mode === 'aspect') {
                 if (aspectWidth.value) formData.set('width', aspectWidth.value);
@@ -241,36 +262,68 @@
             }
 
             submitBtn.disabled = true;
-            loading.style.display = 'block';
+            progressContainer.style.display = 'block';
+            progressBarFill.style.width = '0%';
+            progressPercent.textContent = '0%';
+            progressStatus.textContent = 'ファイルを送信中...';
             resultContainer.style.display = 'none';
             fileList.innerHTML = '';
 
             try {
+                // 変換タスクを登録して即時返却を受ける
                 const response = await fetch('/convert/', {
                     method: 'POST',
                     body: formData
                 });
 
-                if (!response.ok) throw new Error('変換処理に失敗しました');
+                if (!response.ok) throw new Error('変換リクエストに失敗しました');
 
                 const data = await response.json();
-                
-                data.files.forEach(filename => {
-                    const item = document.createElement('div');
-                    item.className = 'file-item';
-                    item.innerHTML = `
-                        <span>${filename}</span>
-                        <a class="download-btn" href="/download/${data.session_id}/${filename}">ダウンロード</a>
-                    `;
-                    fileList.appendChild(item);
-                });
+                const taskId = data.task_id;
 
-                resultContainer.style.display = 'block';
+                // 定期的に進行状況を取得 (0.5秒間隔)
+                const pollInterval = setInterval(async () => {
+                    try {
+                        const progRes = await fetch(`/progress/${taskId}`);
+                        if (!progRes.ok) return;
+
+                        const progData = await progRes.json();
+                        
+                        const percent = progData.progress || 0;
+                        progressBarFill.style.width = percent + '%';
+                        progressPercent.textContent = percent + '%';
+                        progressStatus.textContent = progData.message || '処理中...';
+
+                        // 完了時の処理
+                        if (progData.status === 'completed') {
+                            clearInterval(pollInterval);
+                            submitBtn.disabled = false;
+
+                            if (progData.errors && progData.errors.length > 0 && progData.files.length === 0) {
+                                alert('エラーが発生しました:\n' + progData.errors.join('\n'));
+                                return;
+                            }
+
+                            progData.files.forEach(filename => {
+                                const item = document.createElement('div');
+                                item.className = 'file-item';
+                                item.innerHTML = `
+                                    <span>${filename}</span>
+                                    <a class="download-btn" href="/download/${taskId}/${filename}">ダウンロード</a>
+                                `;
+                                fileList.appendChild(item);
+                            });
+
+                            resultContainer.style.display = 'block';
+                        }
+                    } catch (pollErr) {
+                        console.error('Progress polling error:', pollErr);
+                    }
+                }, 500);
+
             } catch (err) {
                 alert('エラーが発生しました: ' + err.message);
-            } finally {
                 submitBtn.disabled = false;
-                loading.style.display = 'none';
             }
         });
     </script>
