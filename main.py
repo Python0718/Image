@@ -7,12 +7,11 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from PIL import Image, ImageSequence
 import pillow_heif
-import pillow_avif  # AVIFプラグインの自動登録
 from reportlab.graphics import renderPM
 from starlette.requests import Request
 from svglib.svglib import svg2rlg
 
-# HEIF / HEIC のプラグイン登録のみ行う（AVIFは上のimportで自動登録されます）
+# HEIF / HEIC プラグイン登録
 pillow_heif.register_heif_opener()
 
 app = FastAPI()
@@ -22,7 +21,6 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 CONVERTED_STORAGE = {}
 
-# RAW画像の拡張子リスト
 RAW_EXTENSIONS = {
     ".dng",
     ".cr2",
@@ -39,15 +37,12 @@ RAW_EXTENSIONS = {
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
   template = templates.get_template("index.html")
-  html_content = template.render({"request": request})
-  return HTMLResponse(content=html_content)
+  return HTMLResponse(content=template.render({"request": request}))
 
 
-@app.post("/convert/", response_class=HTMLResponse)
+@app.post("/convert/")
 async def convert_images(
-    request: Request,
-    files: list[UploadFile] = File(...),
-    target_format: str = Form(...),
+    files: list[UploadFile] = File(...), target_format: str = Form(...)
 ):
   target_format = target_format.upper()
   session_id = str(uuid.uuid4())
@@ -63,7 +58,6 @@ async def convert_images(
     try:
       img = None
 
-      # 入力ファイルの読み込み処理
       if orig_ext == ".svg":
         svg_io = io.BytesIO(contents)
         drawing = svg2rlg(svg_io)
@@ -73,22 +67,18 @@ async def convert_images(
         img = Image.open(png_io)
 
       elif orig_ext in RAW_EXTENSIONS:
-        # RAW画像内の埋め込みプレビュー/サムネイルをPillowで安全に抽出
         try:
           img = Image.open(io.BytesIO(contents))
         except Exception:
-          # 直接開けない場合はRAWデータ内のExif/JPEGデータを検索して開く
           jpeg_start = contents.find(b"\xff\xd8")
           jpeg_end = contents.rfind(b"\xff\xd9")
           if jpeg_start != -1 and jpeg_end != -1 and jpeg_end > jpeg_start:
             img = Image.open(io.BytesIO(contents[jpeg_start : jpeg_end + 2]))
           else:
-            raise ValueError("RAW画像から画像データを読み込めませんでした。")
-
+            raise ValueError("RAWデータから画像を取得できませんでした")
       else:
         img = Image.open(io.BytesIO(contents))
 
-      # 出力フォーマット別の保存処理
       if target_format == "SVG":
         temp_png = io.BytesIO()
         if hasattr(img, "n_frames") and img.n_frames > 1:
@@ -156,13 +146,8 @@ async def convert_images(
 
   CONVERTED_STORAGE[session_id] = converted_files
 
-  template = templates.get_template("index.html")
-  html_content = template.render({
-      "request": request,
-      "session_id": session_id,
-      "files": list(converted_files.keys()),
-  })
-  return HTMLResponse(content=html_content)
+  # JSONでレスポンスを返します
+  return {"session_id": session_id, "files": list(converted_files.keys())}
 
 
 @app.get("/download/{session_id}/{filename}")
