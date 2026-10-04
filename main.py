@@ -1,6 +1,7 @@
 import io
 import os
 import uuid
+import base64
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
@@ -14,7 +15,6 @@ app = FastAPI()
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
-# 一時的なメモリ上ストレージ
 CONVERTED_STORAGE = {}
 
 
@@ -43,7 +43,32 @@ async def convert_images(
     new_filename = orig_name + ext
 
     try:
-      # SVG形式の読み込み処理
+      # SVG出力が選ばれた場合、または入力がSVGの場合の処理
+      if target_format == "SVG":
+        # 入力が何であれ一度PNGのバイトデータにしてからBase64埋め込みSVGにする
+        if orig_ext == ".svg":
+          svg_io = io.BytesIO(contents)
+          drawing = svg2rlg(svg_io)
+          temp_png = io.BytesIO()
+          renderPM.drawToFile(drawing, temp_png, fmt="PNG")
+          img_bytes = temp_png.getvalue()
+          # サイズ取得用
+          img = Image.open(io.BytesIO(img_bytes))
+        else:
+          img = Image.open(io.BytesIO(contents))
+          temp_png = io.BytesIO()
+          img.save(temp_png, format="PNG")
+          img_bytes = temp_png.getvalue()
+
+        width, height = img.size
+        b64_data = base64.b64encode(img_bytes).decode("utf-8")
+        svg_content = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
+    <image href="data:image/png;base64,{b64_data}" width="{width}" height="{height}"/>
+</svg>'''
+        converted_files[new_filename] = svg_content.encode("utf-8")
+        continue
+
+      # 通常のラスター変換（JPEG, PNG, WEBP, ICOなど）
       if orig_ext == ".svg":
         svg_io = io.BytesIO(contents)
         drawing = svg2rlg(svg_io)
@@ -55,7 +80,6 @@ async def convert_images(
         img = Image.open(io.BytesIO(contents))
 
       with img:
-        # 透過やカラーモードの調整
         if target_format == "JPEG" and img.mode in ("RGBA", "LA", "P"):
           background = Image.new("RGB", img.size, (255, 255, 255))
           if img.mode == "P":
@@ -104,8 +128,11 @@ def download_file(session_id: str, filename: str):
     raise HTTPException(status_code=404, detail="File not found")
 
   file_data = CONVERTED_STORAGE[session_id][filename]
+  media_type = (
+      "image/svg+xml" if filename.lower().endswith(".svg") else "application/octet-stream"
+  )
   return StreamingResponse(
       io.BytesIO(file_data),
-      media_type="application/octet-stream",
+      media_type=media_type,
       headers={"Content-Disposition": f'attachment; filename="{filename}"'},
   )
