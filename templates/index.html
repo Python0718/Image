@@ -20,15 +20,16 @@
         <form action="/convert/" method="post" enctype="multipart/form-data">
             <div class="form-group">
                 <label>画像ファイルを選択 (複数選択可):</label>
-                <!-- SVGやICOも選択できるように拡張 -->
                 <input type="file" name="files" multiple required accept="image/*,.svg,.ico">
             </div>
             <div class="form-group">
                 <label>変換後の形式:</label>
+                <!-- ここにSVGやICOを追加したセレクトボックス -->
                 <select name="target_format">
                     <option value="JPEG">JPEG</option>
                     <option value="PNG">PNG</option>
                     <option value="WEBP">WEBP</option>
+                    <option value="SVG">SVG</option>
                     <option value="ICO">ICO</option>
                 </select>
             </div>
