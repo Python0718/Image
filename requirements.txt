@@ -3,4 +3,4 @@ uvicorn[standard]
 pillow
 python-multipart
 jinja2
-cairosvg
+svglib
