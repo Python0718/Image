@@ -7,6 +7,7 @@ import uuid
 import zipfile
 from flask import Flask, jsonify, render_template, request, send_file
 import imageio.v3 as iio
+import numpy as np
 from PIL import Image, ImageSequence
 import pillow_heif
 from reportlab.graphics import renderPM
@@ -103,7 +104,7 @@ def convert_files():
     orig_ext = orig_ext.lower()
 
     try:
-      # === M3U8出力の特別処理 ===
+      # === 1. M3U8出力の特別処理 ===
       if target_format == "M3U8" and orig_ext in VIDEO_EXTENSIONS:
         with tempfile.TemporaryDirectory() as tmpdir:
           input_path = os.path.join(tmpdir, f"input{orig_ext}")
@@ -112,7 +113,6 @@ def convert_files():
 
           output_m3u8 = os.path.join(tmpdir, "output.m3u8")
 
-          # ffmpegコマンドによるHLS変換・リサイズ指定
           scale_filter = ""
           if target_w or target_h:
             w = target_w if target_w else -2
@@ -136,7 +136,6 @@ def convert_files():
 
           subprocess.run(cmd, check=True)
 
-          # 生成されたm3u8と付随するtsファイルをすべてメモリ上のZIPにまとめる
           zip_io = io.BytesIO()
           with zipfile.ZipFile(zip_io, "w", zipfile.ZIP_DEFLATED) as zipf:
             for root, _, filenames in os.walk(tmpdir):
@@ -153,11 +152,11 @@ def convert_files():
           converted_files[zip_filename] = zip_io.getvalue()
         continue
 
-      # === 通常の動画・画像処理 ===
-      ext = f".{target_format.lower()}"
-      new_filename = orig_name + ext
-
+      # === 2. 通常の動画ファイル処理 ===
       if orig_ext in VIDEO_EXTENSIONS:
+        ext = f".{target_format.lower()}"
+        new_filename = orig_name + ext
+
         temp_video_path = f"temp_{uuid.uuid4()}{orig_ext}"
         with open(temp_video_path, "wb") as f:
           f.write(contents)
@@ -179,8 +178,6 @@ def convert_files():
           raise ValueError("動画フレームを読み込めませんでした")
 
         video_io = io.BytesIO()
-        import numpy as np
-
         arr_frames = [np.array(f) for f in frames]
         iio.imwrite(
             video_io,
@@ -192,7 +189,10 @@ def convert_files():
         converted_files[new_filename] = video_io.getvalue()
         continue
 
-      # 画像ファイル処理
+      # === 3. 画像ファイル処理 ===
+      ext = f".{target_format.lower()}"
+      new_filename = orig_name + ext
+
       if orig_ext == ".svg":
         svg_io = io.BytesIO(contents)
         drawing = svg2rlg(svg_io)
