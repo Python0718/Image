@@ -8,8 +8,6 @@ from fastapi.templating import Jinja2Templates
 from PIL import Image, ImageSequence
 import pillow_heif
 from reportlab.graphics import renderPM
-
-import rawpy
 from starlette.requests import Request
 from svglib.svglib import svg2rlg
 
@@ -23,19 +21,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 CONVERTED_STORAGE = {}
-
-# RAW画像の拡張子リスト
-RAW_EXTENSIONS = {
-    ".dng",
-    ".cr2",
-    ".cr3",
-    ".nef",
-    ".arw",
-    ".orf",
-    ".rw2",
-    ".pef",
-    ".raf",
-}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -65,7 +50,7 @@ async def convert_images(
     try:
       img = None
 
-      # 1. 入力ファイルの読み込み（SVG / RAW / 通常画像）
+      # 入力ファイルの読み込み（SVG / 通常画像・HEICなど）
       if orig_ext == ".svg":
         svg_io = io.BytesIO(contents)
         drawing = svg2rlg(svg_io)
@@ -73,17 +58,11 @@ async def convert_images(
         renderPM.drawToFile(drawing, png_io, fmt="PNG")
         png_io.seek(0)
         img = Image.open(png_io)
-      elif orig_ext in RAW_EXTENSIONS:
-        # RAWデータの現像
-        with rawpy.imread(io.BytesIO(contents)) as raw:
-          rgb_data = raw.postprocess(use_camera_wb=True)
-          img = Image.fromarray(rgb_data)
       else:
         img = Image.open(io.BytesIO(contents))
 
-      # 2. 出力フォーマット別の保存処理
+      # 出力フォーマット別の保存処理
       if target_format == "SVG":
-        # SVG出力は画像を埋め込んだベクターデータを作成
         temp_png = io.BytesIO()
         if hasattr(img, "n_frames") and img.n_frames > 1:
           img.seek(0)
@@ -100,7 +79,6 @@ async def convert_images(
       img_io = io.BytesIO()
 
       if target_format == "GIF":
-        # アニメーションGIFに対応
         if hasattr(img, "n_frames") and img.n_frames > 1:
           frames = [frame.copy() for frame in ImageSequence.Iterator(img)]
           frames[0].save(
@@ -114,7 +92,6 @@ async def convert_images(
           img.save(img_io, format="GIF")
 
       elif target_format in ("HEIC", "HEIF"):
-        # HEIC / HEIF 保存
         heif_file = pillow_heif.from_pillow(img)
         heif_file.save(img_io, quality=90)
 
@@ -142,7 +119,7 @@ async def convert_images(
           img = img.convert("RGB")
         img.save(img_io, "JPEG", quality=95)
 
-      else:  # PNG, WEBP等
+      else:
         img.save(img_io, target_format)
 
       converted_files[new_filename] = img_io.getvalue()
