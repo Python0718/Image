@@ -23,8 +23,9 @@
         <h2>画像形式変換ツール</h2>
         <form action="/convert/" method="post" enctype="multipart/form-data">
             <div class="form-group">
-                <label>画像ファイルを選択 (複数選択可):</label>
-                <input type="file" name="files" multiple required accept="image/*,.ico">
+                <label>画像ファイルを選択 (複数選択可 / SVG・ICO対応):</label>
+                <!-- .svg もアップロードできるように指定 -->
+                <input type="file" name="files" multiple required accept="image/*,.svg,.ico">
             </div>
             <div class="form-group">
                 <label>変換後の形式:</label>
