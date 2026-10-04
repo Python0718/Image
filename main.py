@@ -1,8 +1,7 @@
 import io
 import os
-import zipfile
-import cairosvg
-from fastapi import FastAPI, File, Form, UploadFile
+import uuid
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from PIL import Image
@@ -13,6 +12,10 @@ app = FastAPI()
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
+# メモリ上で変換済みデータを一時保存する辞書（簡易ストレージ）
+# 構造: { session_id: { filename: bytes } }
+CONVERTED_STORAGE = {}
+
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
@@ -21,63 +24,75 @@ def index(request: Request):
   return HTMLResponse(content=html_content)
 
 
-@app.post("/convert/")
+@app.post("/convert/", response_class=HTMLResponse)
 async def convert_images(
-    files: list[UploadFile] = File(...), target_format: str = Form(...)
+    request: Request,
+    files: list[UploadFile] = File(...),
+    target_format: str = Form(...),
 ):
   target_format = target_format.upper()
-  zip_io = io.BytesIO()
+  session_id = str(uuid.uuid4())
+  converted_files = {}
 
-  with zipfile.ZipFile(
-      zip_io, mode="w", compression=zipfile.ZIP_DEFLATED
-  ) as zip_file:
-    for file in files:
-      contents = await file.read()
-      orig_name, orig_ext = os.path.splitext(file.filename)
-      orig_ext = orig_ext.lower()
-      ext = f".{target_format.lower()}"
+  for file in files:
+    contents = await file.read()
+    orig_name, _ = os.path.splitext(file.filename)
+    ext = f".{target_format.lower()}"
+    new_filename = orig_name + ext
 
-      try:
-        # SVG形式の場合はcairosvgを使って一度PNG（バイトデータ）に変換してからPillowで処理する
-        if orig_ext == ".svg":
-          png_data = cairosvg.svg2png(bytestring=contents)
-          img = Image.open(io.BytesIO(png_data))
-        else:
-          img = Image.open(io.BytesIO(contents))
-
-        with img:
-          # JPEG変換時のアルファチャンネル（透明度）対策
-          if target_format == "JPEG" and img.mode in ("RGBA", "LA", "P"):
-            background = Image.new("RGB", img.size, (255, 255, 255))
-            if img.mode == "P":
-              img = img.convert("RGBA")
+    try:
+      with Image.open(io.BytesIO(contents)) as img:
+        # 透過やカラーモードの調整
+        if target_format == "JPEG" and img.mode in ("RGBA", "LA", "P"):
+          background = Image.new("RGB", img.size, (255, 255, 255))
+          if img.mode == "P":
+            img = img.convert("RGBA")
+          if img.mode in ("RGBA", "LA"):
             background.paste(img, mask=img.split()[3])
-            img = background
-          elif target_format != "JPEG" and img.mode not in ("RGB", "RGBA"):
-            img = img.convert("RGB")
+          img = background
+        elif target_format != "JPEG" and img.mode not in ("RGB", "RGBA"):
+          img = img.convert("RGB")
 
-          img_io = io.BytesIO()
+        img_io = io.BytesIO()
+        if target_format == "ICO":
+          img.save(
+              img_io,
+              format="ICO",
+              sizes=[(256, 256), (64, 64), (32, 32), (16, 16)],
+          )
+        elif target_format == "JPEG":
+          img.save(img_io, "JPEG", quality=95)
+        elif target_format == "WEBP":
+          img.save(img_io, "WEBP")
+        else:
+          img.save(img_io, "PNG")
 
-          # 保存処理（ICO形式や各フォーマットの指定）
-          if target_format == "ICO":
-            # ICO形式の場合はマルチサイズ対応として一般的なサイズにリサイズまたはそのまま保存
-            img.save(img_io, format="ICO", sizes=[(256, 256), (64, 64), (32, 32), (16, 16)])
-          elif target_format == "JPEG":
-            img.save(img_io, "JPEG", quality=95)
-          else:
-            img.save(img_io, target_format)
+        converted_files[new_filename] = img_io.getvalue()
+    except Exception as e:
+      print(f"Error processing {file.filename}: {e}")
 
-          img_io.seek(0)
-          zip_file.writestr(orig_name + ext, img_io.read())
+  CONVERTED_STORAGE[session_id] = converted_files
 
-      except Exception as e:
-        print(f"Error processing {file.filename}: {e}")
+  template = templates.get_template("index.html")
+  html_content = template.render({
+      "request": request,
+      "session_id": session_id,
+      "files": list(converted_files.keys()),
+  })
+  return HTMLResponse(content=html_content)
 
-  zip_io.seek(0)
+
+@app.get("/download/{session_id}/{filename}")
+def download_file(session_id: str, filename: str):
+  if (
+      session_id not in CONVERTED_STORAGE
+      or filename not in CONVERTED_STORAGE[session_id]
+  ):
+    raise HTTPException(status_code=404, detail="File not found")
+
+  file_data = CONVERTED_STORAGE[session_id][filename]
   return StreamingResponse(
-      zip_io,
-      media_type="application/x-zip-compressed",
-      headers={
-          "Content-Disposition": "attachment; filename=converted_images.zip"
-      },
+      io.BytesIO(file_data),
+      media_type="application/octet-stream",
+      headers={"Content-Disposition": f'attachment; filename="{filename}"'},
   )
