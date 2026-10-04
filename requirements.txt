@@ -5,3 +5,4 @@ python-multipart
 jinja2
 svglib
 pillow-heif
+pillow-avif-plugin
