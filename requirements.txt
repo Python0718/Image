@@ -1,8 +1,6 @@
-fastapi
-uvicorn[standard]
+flask
 pillow
-python-multipart
-jinja2
-svglib
 pillow-heif
 pillow-avif-plugin
+svglib
+reportlab
