@@ -1,14 +1,21 @@
+import base64
 import io
 import os
 import uuid
-import base64
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
-from PIL import Image
+from PIL import Image, ImageSequence
+import pillow_heif
 from reportlab.graphics import renderPM
+
+import rawpy
 from starlette.requests import Request
 from svglib.svglib import svg2rlg
+
+# HEIF / HEIC / AVIF のプラグインを登録
+pillow_heif.register_heif_opener()
+pillow_heif.register_avif_opener()
 
 app = FastAPI()
 
@@ -16,6 +23,19 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 CONVERTED_STORAGE = {}
+
+# RAW画像の拡張子リスト
+RAW_EXTENSIONS = {
+    ".dng",
+    ".cr2",
+    ".cr3",
+    ".nef",
+    ".arw",
+    ".orf",
+    ".rw2",
+    ".pef",
+    ".raf",
+}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -43,23 +63,32 @@ async def convert_images(
     new_filename = orig_name + ext
 
     try:
-      # SVG出力が選ばれた場合、または入力がSVGの場合の処理
-      if target_format == "SVG":
-        # 入力が何であれ一度PNGのバイトデータにしてからBase64埋め込みSVGにする
-        if orig_ext == ".svg":
-          svg_io = io.BytesIO(contents)
-          drawing = svg2rlg(svg_io)
-          temp_png = io.BytesIO()
-          renderPM.drawToFile(drawing, temp_png, fmt="PNG")
-          img_bytes = temp_png.getvalue()
-          # サイズ取得用
-          img = Image.open(io.BytesIO(img_bytes))
-        else:
-          img = Image.open(io.BytesIO(contents))
-          temp_png = io.BytesIO()
-          img.save(temp_png, format="PNG")
-          img_bytes = temp_png.getvalue()
+      img = None
 
+      # 1. 入力ファイルの読み込み（SVG / RAW / 通常画像）
+      if orig_ext == ".svg":
+        svg_io = io.BytesIO(contents)
+        drawing = svg2rlg(svg_io)
+        png_io = io.BytesIO()
+        renderPM.drawToFile(drawing, png_io, fmt="PNG")
+        png_io.seek(0)
+        img = Image.open(png_io)
+      elif orig_ext in RAW_EXTENSIONS:
+        # RAWデータの現像
+        with rawpy.imread(io.BytesIO(contents)) as raw:
+          rgb_data = raw.postprocess(use_camera_wb=True)
+          img = Image.fromarray(rgb_data)
+      else:
+        img = Image.open(io.BytesIO(contents))
+
+      # 2. 出力フォーマット別の保存処理
+      if target_format == "SVG":
+        # SVG出力は画像を埋め込んだベクターデータを作成
+        temp_png = io.BytesIO()
+        if hasattr(img, "n_frames") and img.n_frames > 1:
+          img.seek(0)
+        img.save(temp_png, format="PNG")
+        img_bytes = temp_png.getvalue()
         width, height = img.size
         b64_data = base64.b64encode(img_bytes).decode("utf-8")
         svg_content = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
@@ -68,43 +97,56 @@ async def convert_images(
         converted_files[new_filename] = svg_content.encode("utf-8")
         continue
 
-      # 通常のラスター変換（JPEG, PNG, WEBP, ICOなど）
-      if orig_ext == ".svg":
-        svg_io = io.BytesIO(contents)
-        drawing = svg2rlg(svg_io)
-        png_io = io.BytesIO()
-        renderPM.drawToFile(drawing, png_io, fmt="PNG")
-        png_io.seek(0)
-        img = Image.open(png_io)
-      else:
-        img = Image.open(io.BytesIO(contents))
+      img_io = io.BytesIO()
 
-      with img:
-        if target_format == "JPEG" and img.mode in ("RGBA", "LA", "P"):
+      if target_format == "GIF":
+        # アニメーションGIFに対応
+        if hasattr(img, "n_frames") and img.n_frames > 1:
+          frames = [frame.copy() for frame in ImageSequence.Iterator(img)]
+          frames[0].save(
+              img_io,
+              format="GIF",
+              save_all=True,
+              append_images=frames[1:],
+              loop=0,
+          )
+        else:
+          img.save(img_io, format="GIF")
+
+      elif target_format in ("HEIC", "HEIF"):
+        # HEIC / HEIF 保存
+        heif_file = pillow_heif.from_pillow(img)
+        heif_file.save(img_io, quality=90)
+
+      elif target_format == "AVIF":
+        img.save(img_io, format="AVIF", quality=80)
+
+      elif target_format == "ICO":
+        if img.mode not in ("RGB", "RGBA"):
+          img = img.convert("RGBA")
+        img.save(
+            img_io,
+            format="ICO",
+            sizes=[(256, 256), (64, 64), (32, 32), (16, 16)],
+        )
+
+      elif target_format == "JPEG":
+        if img.mode in ("RGBA", "LA", "P"):
           background = Image.new("RGB", img.size, (255, 255, 255))
           if img.mode == "P":
             img = img.convert("RGBA")
           if img.mode in ("RGBA", "LA"):
             background.paste(img, mask=img.split()[3])
           img = background
-        elif target_format != "JPEG" and img.mode not in ("RGB", "RGBA"):
-          img = img.convert("RGB")
-
-        img_io = io.BytesIO()
-        if target_format == "ICO":
-          img.save(
-              img_io,
-              format="ICO",
-              sizes=[(256, 256), (64, 64), (32, 32), (16, 16)],
-          )
-        elif target_format == "JPEG":
-          img.save(img_io, "JPEG", quality=95)
-        elif target_format == "WEBP":
-          img.save(img_io, "WEBP")
         else:
-          img.save(img_io, "PNG")
+          img = img.convert("RGB")
+        img.save(img_io, "JPEG", quality=95)
 
-        converted_files[new_filename] = img_io.getvalue()
+      else:  # PNG, WEBP等
+        img.save(img_io, target_format)
+
+      converted_files[new_filename] = img_io.getvalue()
+
     except Exception as e:
       print(f"Error processing {file.filename}: {e}")
 
@@ -128,9 +170,17 @@ def download_file(session_id: str, filename: str):
     raise HTTPException(status_code=404, detail="File not found")
 
   file_data = CONVERTED_STORAGE[session_id][filename]
-  media_type = (
-      "image/svg+xml" if filename.lower().endswith(".svg") else "application/octet-stream"
-  )
+  ext = os.path.splitext(filename)[1].lower()
+
+  media_types = {
+      ".svg": "image/svg+xml",
+      ".gif": "image/gif",
+      ".heic": "image/heic",
+      ".heif": "image/heif",
+      ".avif": "image/avif",
+  }
+  media_type = media_types.get(ext, "application/octet-stream")
+
   return StreamingResponse(
       io.BytesIO(file_data),
       media_type=media_type,
