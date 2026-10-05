@@ -31,18 +31,7 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 def get_ffmpeg_path():
     return imageio_ffmpeg.get_ffmpeg_exe()
 
-def parse_time_to_seconds(time_str):
-    try:
-        parts = time_str.split(":")
-        if len(parts) == 3:
-            h, m, s = parts
-            return float(h) * 3600 + float(m) * 60 + float(s)
-    except Exception:
-        pass
-    return None
-
 def resolve_m3u8_url(m3u8_url):
-    """マスタープレイリストの場合、最高画質のサブプレイリストURLを自動抽出する"""
     try:
         req = urllib.request.Request(m3u8_url, headers={"User-Agent": USER_AGENT})
         with urllib.request.urlopen(req, timeout=10) as response:
@@ -101,7 +90,6 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
         task["message"] = "ファイルを準備中..."
         task["progress"] = 5
 
-        # 1. URL指定の処理 (M3U8 → TS / MP4 等の抽出)
         url_file = next((f for f in files_data if "url" in f), None)
         if url_file:
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -110,14 +98,12 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
                 output_video = os.path.join(tmpdir, f"output{ext}")
 
                 cmd = [ffmpeg_exe, "-y", "-user_agent", USER_AGENT, "-i", input_path]
-                
-                # TSフォーマット抽出の場合は無劣化コピー
                 if target_format == "TS":
                     cmd.extend(["-c", "copy"])
-                elif target_format == "MP4":
-                    cmd.extend(["-preset", "ultrafast", "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p"])
                 else:
                     cmd.extend(["-preset", "ultrafast"])
+                    if target_format == "MP4":
+                        cmd.extend(["-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p"])
 
                 cmd.append(output_video)
 
@@ -125,18 +111,17 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
                 process.wait()
 
                 if process.returncode != 0:
-                    raise RuntimeError("URLからのTS/動画抽出処理に失敗しました。")
+                    raise RuntimeError("URLからの変換処理に失敗しました。")
 
                 with open(output_video, "rb") as vf:
                     converted_files[f"extracted_video{ext}"] = vf.read()
 
             task["status"] = "completed"
             task["progress"] = 100
-            task["message"] = "抽出・変換が完了しました！"
+            task["message"] = "変換が完了しました！"
             task["files"] = converted_files
             return
 
-        # 2. ローカルファイルの処理
         with tempfile.TemporaryDirectory() as tmpdir:
             has_m3u8 = False
             m3u8_file_path = None
@@ -144,7 +129,6 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
             for file_info in files_data:
                 filename = file_info["filename"]
                 save_path = os.path.join(tmpdir, filename)
-
                 os.makedirs(os.path.dirname(save_path), exist_ok=True)
                 with open(save_path, "wb") as f:
                     f.write(file_info["contents"])
@@ -162,15 +146,13 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
                 if has_m3u8:
                     break
 
-            # M3U8からTSやMP4への結合・抽出
             if has_m3u8 and target_format in ("MP4", "WEBM", "MOV", "AVI", "TS"):
-                task["message"] = "M3U8からTS/動画ファイルを抽出・結合中..."
+                task["message"] = "M3U8とセグメントを結合中..."
                 ext = f".{target_format.lower()}"
                 out_name = os.path.splitext(os.path.basename(m3u8_file_path))[0]
                 output_video = os.path.join(tmpdir, f"output{ext}")
 
-                cmd = [ffmpeg_exe, "-y", "-i", m3u8_file_path]
-
+                cmd = [ffmpeg_exe, "-y", "-allowed_extensions", "ALL", "-i", m3u8_file_path]
                 if target_format == "TS":
                     cmd.extend(["-c", "copy"])
                 else:
@@ -184,7 +166,7 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
                 process.wait()
 
                 if process.returncode != 0:
-                    raise RuntimeError("TSファイルの抽出・結合に失敗しました。.tsセグメントファイルが不足している可能性があります。")
+                    raise RuntimeError("M3U8の結合に失敗しました。.tsファイルがすべて同じフォルダに含まれているか確認してください。")
 
                 with open(output_video, "rb") as vf:
                     converted_files[f"{out_name}{ext}"] = vf.read()
@@ -235,7 +217,7 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
 
         task["status"] = "completed"
         task["progress"] = 100
-        task["message"] = "完了しました！"
+        task["message"] = "変換が完了しました！"
         task["files"] = converted_files
         task["errors"] = errors
 
