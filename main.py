@@ -7,6 +7,7 @@ import threading
 import uuid
 import zipfile
 import traceback
+import urllib.parse
 from flask import Flask, jsonify, render_template, request, send_file
 import imageio_ffmpeg
 from PIL import Image, ImageSequence
@@ -22,7 +23,8 @@ app = Flask(__name__)
 TASKS = {}
 
 RAW_EXTENSIONS = {".dng", ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".pef", ".raf"}
-VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".webm", ".mkv", ".m4v", ".wmv", ".flv"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".webm", ".mkv", ".m4v", ".wmv", ".flv", ".ts", ".m3u8"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".heic", ".heif", ".ico", ".svg"}
 
 def get_ffmpeg_path():
     return imageio_ffmpeg.get_ffmpeg_exe()
@@ -69,33 +71,41 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
 
         for idx, file_info in enumerate(files_data):
             filename = file_info["filename"]
-            contents = file_info["contents"]
+            is_url = "url" in file_info
+            
             orig_name, orig_ext = os.path.splitext(filename)
             orig_ext = orig_ext.lower()
 
             base_progress = int((idx / total_files) * 100)
             next_base_progress = int(((idx + 1) / total_files) * 100)
-            task["message"] = f"変換中 ({idx + 1}/{total_files}): {filename}"
+            
+            disp_name = file_info["url"] if is_url else filename
+            task["message"] = f"変換中 ({idx + 1}/{total_files}): {disp_name}"
             task["progress"] = base_progress
 
             try:
-                # === A. 動画ファイルの処理 ===
-                if orig_ext in VIDEO_EXTENSIONS or target_format in ("MP4", "WEBM", "MOV", "AVI", "M3U8"):
-                    with tempfile.TemporaryDirectory() as tmpdir:
-                        input_path = os.path.join(tmpdir, f"input{orig_ext}")
-                        with open(input_path, "wb") as f:
-                            f.write(contents)
+                # ターゲット形式が動画系、または入力元が動画拡張子/M3U8/URLの場合は動画処理ルートへ
+                is_target_video = target_format in ("MP4", "WEBM", "MOV", "AVI", "M3U8")
+                is_source_video = orig_ext in VIDEO_EXTENSIONS or orig_ext == ".m3u8"
 
-                        # --- M3U8 (HLS) 変換 ---
+                if is_target_video or is_source_video or is_url:
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        if is_url:
+                            input_path = file_info["url"]
+                        else:
+                            input_path = os.path.join(tmpdir, f"input{orig_ext}")
+                            with open(input_path, "wb") as f:
+                                f.write(file_info["contents"])
+
+                        # --- M3U8出力への変換 ---
                         if target_format == "M3U8":
-                            # プレイリスト自体の名前をわかりやすくする
                             output_m3u8 = os.path.join(tmpdir, f"{orig_name}.m3u8")
                             
                             cmd = [
                                 ffmpeg_exe, "-y",
                                 "-i", input_path,
                                 "-preset", "ultrafast",
-                                "-pix_fmt", "yuv420p" # ブラウザ再生互換性のため必須
+                                "-pix_fmt", "yuv420p"
                             ]
 
                             if target_w or target_h:
@@ -110,12 +120,10 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
                                 "-codec:a", "aac",
                                 "-hls_time", "4",
                                 "-hls_playlist_type", "vod",
-                                # TSファイルの名前も明示的に指定してZIP化時の不整合を防ぐ
                                 "-hls_segment_filename", os.path.join(tmpdir, f"{orig_name}_%03d.ts"),
                                 output_m3u8
                             ])
 
-                            # stdout=subprocess.DEVNULL にすることで、バッファ詰まり(フリーズ)を完全に防ぐ
                             process = subprocess.Popen(
                                 cmd,
                                 stdout=subprocess.DEVNULL,
@@ -145,7 +153,6 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
                             if process.returncode != 0:
                                 raise RuntimeError("FFmpegによるM3U8変換処理が失敗しました。")
 
-                            # ZIP化処理
                             zip_io = io.BytesIO()
                             with zipfile.ZipFile(zip_io, "w", zipfile.ZIP_DEFLATED) as zipf:
                                 for root, _, filenames in os.walk(tmpdir):
@@ -153,13 +160,12 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
                                         if fn == f"input{orig_ext}":
                                             continue
                                         file_path = os.path.join(root, fn)
-                                        # HLSの参照を壊さないため、生成されたファイル名のままZIPに直下配置する
                                         zipf.write(file_path, arcname=fn)
 
                             zip_filename = f"{orig_name}_m3u8.zip"
                             converted_files[zip_filename] = zip_io.getvalue()
 
-                        # --- 通常の動画変換 (MP4, MOV, WEBM 等) ---
+                        # --- 通常の動画出力 (MP4, MOV, WEBM 等) ---
                         else:
                             ext = f".{target_format.lower()}"
                             output_video = os.path.join(tmpdir, f"output{ext}")
@@ -220,10 +226,11 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
                                 new_filename = orig_name + ext
                                 converted_files[new_filename] = vf.read()
 
-                # === B. 画像ファイルの処理 ===
+                # === 画像ファイルの処理ルート ===
                 else:
                     ext = f".{target_format.lower()}"
                     new_filename = orig_name + ext
+                    contents = file_info["contents"]
 
                     if orig_ext == ".svg":
                         svg_io = io.BytesIO(contents)
@@ -290,7 +297,6 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
                 print(f"Error processing {filename}: {file_e}")
                 errors.append(f"{filename}: {str(file_e)}")
             
-            # 各ファイルの処理が終わるごとに進捗を更新
             task["progress"] = next_base_progress
 
         task["status"] = "completed"
@@ -300,7 +306,6 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
         task["errors"] = errors
 
     except Exception as e:
-        # 万が一バックグラウンド処理全体がクラッシュした時の安全装置
         traceback.print_exc()
         task["status"] = "error"
         task["message"] = f"予期せぬエラーが発生しました: {str(e)}"
@@ -326,14 +331,33 @@ def convert_files():
     maintain_aspect = maintain_aspect_str.lower() == "true"
 
     files = request.files.getlist("files")
+    video_url = request.form.get("video_url")
+    
     files_data = []
 
     for file in files:
         if file.filename:
             files_data.append({"filename": file.filename, "contents": file.read()})
 
+    if video_url and video_url.strip():
+        url_str = video_url.strip()
+        parsed = urllib.parse.urlparse(url_str)
+        base_name = os.path.basename(parsed.path)
+        
+        if not base_name:
+            base_name = "downloaded_video"
+        
+        _, ext = os.path.splitext(base_name)
+        if not ext:
+            if "m3u8" in url_str.lower():
+                base_name += ".m3u8"
+            else:
+                base_name += ".mp4"
+                
+        files_data.append({"filename": base_name, "url": url_str})
+
     if not files_data:
-        return jsonify({"error": "ファイルが選択されていません"}), 400
+        return jsonify({"error": "ファイルまたはURLが指定されていません"}), 400
 
     TASKS[task_id] = {
         "status": "processing",
