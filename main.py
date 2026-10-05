@@ -101,7 +101,7 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
         task["message"] = "ファイルを準備中..."
         task["progress"] = 5
 
-        # 1. URL指定の処理
+        # 1. URL指定の処理 (M3U8 → TS / MP4 等の抽出)
         url_file = next((f for f in files_data if "url" in f), None)
         if url_file:
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -109,49 +109,50 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
                 ext = f".{target_format.lower()}"
                 output_video = os.path.join(tmpdir, f"output{ext}")
 
-                cmd = [ffmpeg_exe, "-y", "-user_agent", USER_AGENT, "-i", input_path, "-preset", "ultrafast"]
-                if target_format == "MP4":
-                    cmd.extend(["-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p"])
+                cmd = [ffmpeg_exe, "-y", "-user_agent", USER_AGENT, "-i", input_path]
+                
+                # TSフォーマット抽出の場合は無劣化コピー
+                if target_format == "TS":
+                    cmd.extend(["-c", "copy"])
+                elif target_format == "MP4":
+                    cmd.extend(["-preset", "ultrafast", "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p"])
+                else:
+                    cmd.extend(["-preset", "ultrafast"])
+
                 cmd.append(output_video)
 
                 process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, universal_newlines=True, encoding="utf-8", errors="replace")
                 process.wait()
 
                 if process.returncode != 0:
-                    raise RuntimeError("URLからのFFmpeg変換に失敗しました。")
+                    raise RuntimeError("URLからのTS/動画抽出処理に失敗しました。")
 
                 with open(output_video, "rb") as vf:
-                    converted_files[f"converted_video{ext}"] = vf.read()
+                    converted_files[f"extracted_video{ext}"] = vf.read()
 
             task["status"] = "completed"
             task["progress"] = 100
-            task["message"] = "変換が完了しました！"
+            task["message"] = "抽出・変換が完了しました！"
             task["files"] = converted_files
             return
 
-        # 2. ローカルファイルの処理（M3U8・ZIP・画像・動画の一括対応）
+        # 2. ローカルファイルの処理
         with tempfile.TemporaryDirectory() as tmpdir:
             has_m3u8 = False
             m3u8_file_path = None
-            uploaded_file_names = []
 
-            # ファイルを一時フォルダに保存（ZIPの場合は解凍）
             for file_info in files_data:
                 filename = file_info["filename"]
-                uploaded_file_names.append(filename)
                 save_path = os.path.join(tmpdir, filename)
 
-                # ディレクトリ構造がある場合は作成
                 os.makedirs(os.path.dirname(save_path), exist_ok=True)
                 with open(save_path, "wb") as f:
                     f.write(file_info["contents"])
 
-                # ZIPファイルが送られた場合は解凍する
                 if filename.lower().endswith(".zip"):
                     with zipfile.ZipFile(save_path, 'r') as zip_ref:
                         zip_ref.extractall(tmpdir)
 
-            # フォルダ内から .m3u8 ファイルを探す
             for root, _, filenames in os.walk(tmpdir):
                 for fn in filenames:
                     if fn.lower().endswith(".m3u8"):
@@ -161,21 +162,21 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
                 if has_m3u8:
                     break
 
-            # --- A. M3U8を含むローカル動画群をMP4等に変換する場合 ---
-            if has_m3u8 and target_format in ("MP4", "WEBM", "MOV", "AVI"):
-                task["message"] = "M3U8とセグメントファイルを結合・変換中..."
+            # M3U8からTSやMP4への結合・抽出
+            if has_m3u8 and target_format in ("MP4", "WEBM", "MOV", "AVI", "TS"):
+                task["message"] = "M3U8からTS/動画ファイルを抽出・結合中..."
                 ext = f".{target_format.lower()}"
                 out_name = os.path.splitext(os.path.basename(m3u8_file_path))[0]
                 output_video = os.path.join(tmpdir, f"output{ext}")
 
-                cmd = [
-                    ffmpeg_exe, "-y",
-                    "-i", m3u8_file_path,
-                    "-preset", "ultrafast"
-                ]
+                cmd = [ffmpeg_exe, "-y", "-i", m3u8_file_path]
 
-                if target_format == "MP4":
-                    cmd.extend(["-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p"])
+                if target_format == "TS":
+                    cmd.extend(["-c", "copy"])
+                else:
+                    cmd.extend(["-preset", "ultrafast"])
+                    if target_format == "MP4":
+                        cmd.extend(["-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p"])
 
                 cmd.append(output_video)
 
@@ -183,33 +184,36 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
                 process.wait()
 
                 if process.returncode != 0:
-                    raise RuntimeError("M3U8と.tsファイルの結合に失敗しました。セグメントファイル（.ts）が不足していないか確認してください。")
+                    raise RuntimeError("TSファイルの抽出・結合に失敗しました。.tsセグメントファイルが不足している可能性があります。")
 
                 with open(output_video, "rb") as vf:
                     converted_files[f"{out_name}{ext}"] = vf.read()
 
-            # --- B. 通常の単一ファイル処理（画像や普通の動画など） ---
             else:
-                total_files = len(files_data)
                 for idx, file_info in enumerate(files_data):
                     filename = file_info["filename"]
                     if filename.lower().endswith(".zip"):
-                        continue  # ZIPは解凍処理済みのためスキップ
+                        continue
 
                     orig_name, orig_ext = os.path.splitext(filename)
                     orig_ext = orig_ext.lower()
                     input_file = os.path.join(tmpdir, filename)
 
-                    is_target_video = target_format in ("MP4", "WEBM", "MOV", "AVI", "M3U8")
+                    is_target_video = target_format in ("MP4", "WEBM", "MOV", "AVI", "M3U8", "TS")
                     is_source_video = orig_ext in VIDEO_EXTENSIONS
 
                     if is_target_video or is_source_video:
                         ext = f".{target_format.lower()}"
                         output_video = os.path.join(tmpdir, f"out_{orig_name}{ext}")
 
-                        cmd = [ffmpeg_exe, "-y", "-i", input_file, "-preset", "ultrafast"]
-                        if target_format == "MP4":
-                            cmd.extend(["-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p"])
+                        cmd = [ffmpeg_exe, "-y", "-i", input_file]
+                        if target_format == "TS":
+                            cmd.extend(["-c", "copy"])
+                        else:
+                            cmd.extend(["-preset", "ultrafast"])
+                            if target_format == "MP4":
+                                cmd.extend(["-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p"])
+
                         cmd.append(output_video)
 
                         process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -219,7 +223,6 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
                             with open(output_video, "rb") as vf:
                                 converted_files[f"{orig_name}{ext}"] = vf.read()
                     else:
-                        # 画像処理
                         img = Image.open(input_file)
                         img = resize_image(img, target_w, target_h, maintain_aspect)
                         img_io = io.BytesIO()
@@ -232,7 +235,7 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
 
         task["status"] = "completed"
         task["progress"] = 100
-        task["message"] = "変換が完了しました！"
+        task["message"] = "完了しました！"
         task["files"] = converted_files
         task["errors"] = errors
 
@@ -321,6 +324,7 @@ def download_file(task_id: str, filename: str):
 
     media_types = {
         ".mp4": "video/mp4",
+        ".ts": "video/mp2t",
         ".webm": "video/webm",
         ".mov": "video/quicktime",
         ".zip": "application/zip",
