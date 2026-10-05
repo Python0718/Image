@@ -14,7 +14,7 @@
 
         .form-group { margin: 20px 0; text-align: left; }
         label { display: block; margin-bottom: 5px; font-weight: bold; }
-        input[type="number"], select { width: 100%; padding: 10px; box-sizing: border-box; border-radius: 4px; border: 1px solid #ccc; font-size: 16px; }
+        input[type="number"], input[type="url"], select { width: 100%; padding: 10px; box-sizing: border-box; border-radius: 4px; border: 1px solid #ccc; font-size: 16px; }
         input[type="file"] { width: 100%; padding: 10px; box-sizing: border-box; }
         
         .size-box { background: #f0f4f8; padding: 15px; border-radius: 6px; margin-top: 10px; display: none; }
@@ -22,11 +22,12 @@
         .input-row > div { flex: 1; }
         .input-row label { font-size: 13px; color: #555; }
         
+        .or-divider { text-align: center; margin: 15px 0; font-weight: bold; color: #888; font-size: 14px; }
+
         button[type="submit"] { background: #4CAF50; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 4px; cursor: pointer; width: 100%; margin-top: 15px; }
         button[type="submit"]:hover { background: #45a049; }
         button[type="submit"]:disabled { background: #ccc; cursor: not-allowed; }
         
-        /* 進行状況（プログレスバー）スタイル */
         .progress-container { margin-top: 20px; display: none; text-align: left; }
         .progress-label { font-size: 14px; font-weight: bold; color: #333; margin-bottom: 5px; display: flex; justify-content: space-between; }
         .progress-bar-bg { width: 100%; background: #e0e0e0; height: 20px; border-radius: 10px; overflow: hidden; }
@@ -44,10 +45,9 @@
     <div class="card">
         <h2>メディア変換・サイズ変更ツール</h2>
 
-        <!-- タブ切り替え -->
         <div class="tab-container">
             <button type="button" class="tab-btn active" onclick="switchTab('image')">🖼️ Image (画像)</button>
-            <button type="button" class="tab-btn" onclick="switchTab('video')">🎬 Video (動画)</button>
+            <button type="button" class="tab-btn" onclick="switchTab('video')">🎬 Video (動画・M3U8)</button>
         </div>
 
         <form id="convertForm">
@@ -75,8 +75,13 @@
             <!-- 動画パネル -->
             <div id="videoPanel" class="section-panel">
                 <div class="form-group">
-                    <label>動画ファイルを選択 (MP4, MOV, WebM, M3U8等):</label>
-                    <input type="file" name="video_files" id="videoInput" multiple accept="video/*,.mp4,.mov,.webm,.mkv,.m4v">
+                    <label>ローカルの動画・プレイリストファイルを選択 (MP4, M3U8, TS等):</label>
+                    <input type="file" name="video_files" id="videoInput" multiple accept="video/*,.mp4,.mov,.webm,.mkv,.m4v,.m3u8,.ts">
+                    
+                    <div class="or-divider">ーー またはリンク(URL)から取得 ーー</div>
+                    
+                    <label>動画やM3U8のURL (https://...):</label>
+                    <input type="url" id="videoUrl" name="video_url" placeholder="例: https://example.com/playlist.m3u8 または video.mp4">
                 </div>
                 <div class="form-group">
                     <label>変換後の形式:</label>
@@ -137,7 +142,6 @@
             <button type="submit" id="submitBtn">変換・サイズ変更実行</button>
         </form>
 
-        <!-- 進行状況エリア -->
         <div id="progressContainer" class="progress-container">
             <div class="progress-label">
                 <span id="progressStatus">変換準備中...</span>
@@ -148,7 +152,6 @@
             </div>
         </div>
 
-        <!-- 完了一覧エリア -->
         <div id="resultContainer" class="result-list" style="display: none;">
             <h3>変換完了ファイル</h3>
             <div id="fileList"></div>
@@ -170,6 +173,7 @@
                 buttons[0].classList.add('active');
                 document.getElementById('imagePanel').classList.add('active');
                 document.getElementById('videoInput').value = '';
+                document.getElementById('videoUrl').value = '';
             } else {
                 buttons[1].classList.add('active');
                 document.getElementById('videoPanel').classList.add('active');
@@ -234,12 +238,17 @@
                 targetFormat = document.querySelector('[name="target_format_image"]').value;
             } else {
                 const videoFiles = document.getElementById('videoInput').files;
-                if (videoFiles.length === 0) {
-                    alert('動画ファイルを選択してください');
+                const videoUrl = document.getElementById('videoUrl').value.trim();
+
+                if (videoFiles.length === 0 && !videoUrl) {
+                    alert('動画ファイルを選択するか、動画・M3U8のURLを入力してください');
                     return;
                 }
                 for (let i = 0; i < videoFiles.length; i++) {
                     formData.append('files', videoFiles[i]);
+                }
+                if (videoUrl) {
+                    formData.append('video_url', videoUrl);
                 }
                 targetFormat = document.querySelector('[name="target_format_video"]').value;
             }
@@ -263,15 +272,14 @@
 
             submitBtn.disabled = true;
             progressContainer.style.display = 'block';
-            progressBarFill.style.backgroundColor = '#4CAF50'; // 実行時は緑に戻す
+            progressBarFill.style.backgroundColor = '#4CAF50';
             progressBarFill.style.width = '0%';
             progressPercent.textContent = '0%';
-            progressStatus.textContent = 'ファイルを送信中...';
+            progressStatus.textContent = 'リクエストを送信中...';
             resultContainer.style.display = 'none';
             fileList.innerHTML = '';
 
             try {
-                // 変換タスクを登録して即時返却を受ける
                 const response = await fetch('/convert/', {
                     method: 'POST',
                     body: formData
@@ -282,7 +290,6 @@
                 const data = await response.json();
                 const taskId = data.task_id;
 
-                // 定期的に進行状況を取得 (0.5秒間隔)
                 const pollInterval = setInterval(async () => {
                     try {
                         const progRes = await fetch(`/progress/${taskId}`);
@@ -295,11 +302,10 @@
                         progressPercent.textContent = percent + '%';
                         progressStatus.textContent = progData.message || '処理中...';
 
-                        // --- 完了時の処理 ---
                         if (progData.status === 'completed') {
                             clearInterval(pollInterval);
                             submitBtn.disabled = false;
-                            progressBarFill.style.backgroundColor = '#4CAF50'; // 成功時は緑
+                            progressBarFill.style.backgroundColor = '#4CAF50';
 
                             if (progData.errors && progData.errors.length > 0 && progData.files.length === 0) {
                                 alert('エラーが発生しました:\n' + progData.errors.join('\n'));
@@ -318,12 +324,11 @@
 
                             resultContainer.style.display = 'block';
                         
-                        // --- エラー時の処理 ---
                         } else if (progData.status === 'error') {
                             clearInterval(pollInterval);
                             submitBtn.disabled = false;
                             progressStatus.textContent = 'エラーが発生しました';
-                            progressBarFill.style.backgroundColor = '#f44336'; // エラー時は赤色に
+                            progressBarFill.style.backgroundColor = '#f44336';
                             
                             const errMsg = progData.message || '不明なエラーが発生しました';
                             alert('処理中にエラーが発生しました:\n' + errMsg);
@@ -336,7 +341,7 @@
             } catch (err) {
                 alert('エラーが発生しました: ' + err.message);
                 submitBtn.disabled = false;
-                progressBarFill.style.backgroundColor = '#f44336'; // 通信エラー時も赤色に
+                progressBarFill.style.backgroundColor = '#f44336';
                 progressStatus.textContent = '通信エラー';
             }
         });
