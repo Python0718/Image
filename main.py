@@ -8,6 +8,7 @@ import uuid
 import zipfile
 import traceback
 import urllib.parse
+import urllib.request
 from flask import Flask, jsonify, render_template, request, send_file
 import imageio_ffmpeg
 from PIL import Image, ImageSequence
@@ -19,12 +20,13 @@ pillow_heif.register_heif_opener()
 
 app = Flask(__name__)
 
-# タスク管理用ストレージ
 TASKS = {}
 
 RAW_EXTENSIONS = {".dng", ".cr2", ".cr3", ".nef", ".arw", ".orf", ".rw2", ".pef", ".raf"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".webm", ".mkv", ".m4v", ".wmv", ".flv", ".ts", ".m3u8"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".heic", ".heif", ".ico", ".svg"}
+
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 def get_ffmpeg_path():
     return imageio_ffmpeg.get_ffmpeg_exe()
@@ -38,6 +40,34 @@ def parse_time_to_seconds(time_str):
     except Exception:
         pass
     return None
+
+def resolve_m3u8_url(m3u8_url):
+    """マスタープレイリストの場合、最高画質のサブプレイリストURLを自動抽出する"""
+    try:
+        req = urllib.request.Request(m3u8_url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            content = response.read().decode("utf-8", errors="ignore")
+
+        if "#EXT-X-STREAM-INF" in content:
+            lines = content.splitlines()
+            best_bandwidth = -1
+            best_url = None
+
+            for i, line in enumerate(lines):
+                if line.startswith("#EXT-X-STREAM-INF"):
+                    bw_match = re.search(r"BANDWIDTH=(\d+)", line)
+                    bw = int(bw_match.group(1)) if bw_match else 0
+                    if i + 1 < len(lines):
+                        next_line = lines[i + 1].strip()
+                        if next_line and not next_line.startswith("#"):
+                            if bw > best_bandwidth:
+                                best_bandwidth = bw
+                                best_url = urllib.parse.urljoin(m3u8_url, next_line)
+            if best_url:
+                return best_url
+    except Exception as e:
+        print(f"M3U8解析警告: {e}")
+    return m3u8_url
 
 def resize_image(img: Image.Image, target_width: int | None, target_height: int | None, maintain_aspect: bool) -> Image.Image:
     if not target_width and not target_height:
@@ -84,14 +114,14 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
             task["progress"] = base_progress
 
             try:
-                # ターゲット形式が動画系、または入力元が動画拡張子/M3U8/URLの場合は動画処理ルートへ
                 is_target_video = target_format in ("MP4", "WEBM", "MOV", "AVI", "M3U8")
                 is_source_video = orig_ext in VIDEO_EXTENSIONS or orig_ext == ".m3u8"
 
                 if is_target_video or is_source_video or is_url:
                     with tempfile.TemporaryDirectory() as tmpdir:
                         if is_url:
-                            input_path = file_info["url"]
+                            # M3U8 URLの自動解決（マスタープレイリスト対策）
+                            input_path = resolve_m3u8_url(file_info["url"])
                         else:
                             input_path = os.path.join(tmpdir, f"input{orig_ext}")
                             with open(input_path, "wb") as f:
@@ -103,6 +133,7 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
                             
                             cmd = [
                                 ffmpeg_exe, "-y",
+                                "-user_agent", USER_AGENT,
                                 "-i", input_path,
                                 "-preset", "ultrafast",
                                 "-pix_fmt", "yuv420p"
@@ -172,6 +203,7 @@ def process_conversion_task(task_id, files_data, target_format, target_w, target
 
                             cmd = [
                                 ffmpeg_exe, "-y",
+                                "-user_agent", USER_AGENT,
                                 "-i", input_path,
                                 "-preset", "ultrafast",
                             ]
