@@ -3,4 +3,5 @@ gunicorn
 Pillow
 pillow-heif
 rawpy
-cairosvg
+svglib
+reportlab
