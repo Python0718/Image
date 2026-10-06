@@ -9,14 +9,11 @@ from svglib.svglib import svg2rlg
 
 pillow_heif.register_heif_opener()
 
-# --- templates フォルダの絶対パスを明示的に指定 ---
+# templates フォルダのパスを明示的に絶対パスで指定
 base_dir = os.path.abspath(os.path.dirname(__file__))
 template_dir = os.path.join(base_dir, "templates")
 
 app = Flask(__name__, template_folder=template_dir)
-
-# ... 以下同じ ...
-
 
 RAW_EXTENSIONS = {
     "cr2",
@@ -39,7 +36,6 @@ def process_image(
 
   # 1. 読み込み
   if ext == "svg":
-    # svglibでSVGを読み込み、PIL画像データ（PNGバイト流）へ変換
     drawing = svg2rlg(io.BytesIO(file_bytes))
     png_buffer = io.BytesIO()
     renderPM.drawToFile(drawing, png_buffer, fmt="PNG")
@@ -94,16 +90,19 @@ def process_image(
   return output_buffer.getvalue(), mimetype
 
 
+# ★ 1. トップページ（Web画面の表示）
 @app.route("/", methods=["GET"])
 def index():
   return render_template("index.html")
 
 
+# ★ 2. UptimeRobot用のヘルスチェック（JSONのみ返す）
 @app.route("/health", methods=["GET"])
 def health_check():
   return jsonify({"status": "ok", "message": "Image Converter is running"}), 200
 
 
+# ★ 3. 画像変換API
 @app.route("/convert", methods=["POST"])
 def convert():
   if "file" not in request.files:
@@ -138,4 +137,3 @@ def convert():
 
 if __name__ == "__main__":
   app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-w
