@@ -1,9 +1,6 @@
-flask
-pillow
+Flask
+gunicorn
+Pillow
 pillow-heif
-pillow-avif-plugin
-svglib
-reportlab
-imageio
-imageio-ffmpeg
-ffmpeg-python
+rawpy
+cairosvg
