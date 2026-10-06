@@ -1,492 +1,363 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>メディア変換・サイズ変更ツール</title>
-    <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-        }
+import io
+import os
+import re
+import subprocess
+import tempfile
+import threading
+import uuid
+import zipfile
+import traceback
+import urllib.parse
+import urllib.request
+from flask import Flask, jsonify, render_template, request, send_file
+import imageio_ffmpeg
+from PIL import Image, ImageSequence
+import pillow_heif
+from reportlab.graphics import renderPM
+from svglib.svglib import svg2rlg
 
-        body {
-            background-color: #e5e5e5;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            padding: 20px;
-        }
+pillow_heif.register_heif_opener()
 
-        .container {
-            background: #ffffff;
-            width: 100%;
-            max-width: 480px;
-            border-radius: 12px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-            padding: 24px 20px;
-        }
+app = Flask(__name__)
 
-        h1 {
-            text-align: center;
-            font-size: 20px;
-            color: #111;
-            margin-bottom: 20px;
-            font-weight: bold;
-        }
+TASKS = {}
 
-        .tabs {
-            display: flex;
-            border-bottom: 2px solid #e0e0e0;
-            margin-bottom: 20px;
-        }
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".webm", ".mkv", ".m4v", ".wmv", ".flv", ".ts", ".m3u8", ".zip"}
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-        .tab-btn {
-            flex: 1;
-            padding: 10px;
-            text-align: center;
-            background: none;
-            border: none;
-            font-size: 14px;
-            font-weight: bold;
-            color: #666;
-            cursor: pointer;
-            border-bottom: 3px solid transparent;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 6px;
-        }
+def get_ffmpeg_path():
+    return imageio_ffmpeg.get_ffmpeg_exe()
 
-        .tab-btn.active {
-            color: #2e7d32;
-            border-bottom-color: #2e7d32;
-        }
+def resolve_m3u8_url(m3u8_url):
+    try:
+        req = urllib.request.Request(m3u8_url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            content = response.read().decode("utf-8", errors="ignore")
 
-        .form-group {
-            margin-bottom: 20px;
-        }
+        if "#EXT-X-STREAM-INF" in content:
+            lines = content.splitlines()
+            best_bandwidth = -1
+            best_url = None
 
-        label {
-            display: block;
-            font-size: 13px;
-            font-weight: bold;
-            color: #222;
-            margin-bottom: 8px;
-        }
+            for i, line in enumerate(lines):
+                if line.startswith("#EXT-X-STREAM-INF"):
+                    bw_match = re.search(r"BANDWIDTH=(\d+)", line)
+                    bw = int(bw_match.group(1)) if bw_match else 0
+                    if i + 1 < len(lines):
+                        next_line = lines[i + 1].strip()
+                        if next_line and not next_line.startswith("#"):
+                            if bw > best_bandwidth:
+                                best_bandwidth = bw
+                                best_url = urllib.parse.urljoin(m3u8_url, next_line)
+            if best_url:
+                return best_url
+    except Exception as e:
+        print(f"M3U8解析警告: {e}")
+    return m3u8_url
 
-        .hint {
-            font-size: 11px;
-            color: #666;
-            margin-bottom: 10px;
-            line-height: 1.4;
-        }
+def resize_image(img: Image.Image, target_width: int | None, target_height: int | None, maintain_aspect: bool) -> Image.Image:
+    if not target_width and not target_height:
+        return img
+    orig_w, orig_h = img.size
+    if maintain_aspect:
+        if target_width and target_height:
+            img.thumbnail((target_width, target_height), Image.Resampling.LANCZOS)
+            return img
+        elif target_width:
+            new_w = target_width
+            new_h = int(orig_h * (target_width / orig_w))
+        elif target_height:
+            new_h = target_height
+            new_w = int(orig_w * (target_height / orig_h))
+    else:
+        new_w = target_width if target_width else orig_w
+        new_h = target_height if target_height else orig_h
+    return img.resize((max(1, new_w), max(1, new_h)), Image.Resampling.LANCZOS)
 
-        .file-btn {
-            background: #e0e0e0;
-            border: 1px solid #ccc;
-            padding: 10px 16px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: bold;
-            cursor: pointer;
-            color: #333;
-            width: 100%;
-            text-align: center;
-            transition: background 0.2s;
-        }
+def process_conversion_task(task_id, files_data, target_format, target_w, target_h, maintain_aspect):
+    task = TASKS.get(task_id)
+    if not task:
+        return
 
-        .file-btn:active {
-            background: #d0d0d0;
-        }
+    try:
+        ffmpeg_exe = get_ffmpeg_path()
+        converted_files = {}
+        errors = []
 
-        .file-list {
-            margin-top: 10px;
-            max-height: 150px;
-            overflow-y: auto;
-            border: 1px solid #ddd;
-            border-radius: 6px;
-            padding: 5px;
-            background: #f9f9f9;
-        }
+        task["message"] = "ファイルを準備中..."
+        task["progress"] = 5
 
-        .file-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 12px;
-            padding: 6px 8px;
-            border-bottom: 1px solid #eee;
-            color: #444;
-        }
+        url_file = next((f for f in files_data if "url" in f), None)
+        if url_file:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                input_path = resolve_m3u8_url(url_file["url"])
+                
+                if target_format == "M3U8":
+                    hls_dir = os.path.join(tmpdir, "hls_output")
+                    os.makedirs(hls_dir, exist_ok=True)
+                    out_path = os.path.join(hls_dir, "playlist.m3u8")
+                    
+                    cmd = [ffmpeg_exe, "-y", "-user_agent", USER_AGENT, "-i", input_path,
+                           "-c:v", "libx264", "-c:a", "aac", "-f", "hls", "-hls_time", "10", "-hls_list_size", "0", out_path]
+                    
+                    process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, universal_newlines=True, encoding="utf-8", errors="replace")
+                    process.wait()
+                    
+                    if process.returncode != 0:
+                        raise RuntimeError("URLからM3U8への変換に失敗しました。")
+                        
+                    zip_buffer = io.BytesIO()
+                    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                        for f in os.listdir(hls_dir):
+                            zf.write(os.path.join(hls_dir, f), arcname=f)
+                    converted_files["downloaded_video_m3u8.zip"] = zip_buffer.getvalue()
+                else:
+                    ext = f".{target_format.lower()}"
+                    output_video = os.path.join(tmpdir, f"output{ext}")
 
-        .file-item:last-child {
-            border-bottom: none;
-        }
+                    cmd = [ffmpeg_exe, "-y", "-user_agent", USER_AGENT, "-i", input_path]
+                    if target_format == "TS":
+                        cmd.extend(["-c", "copy"])
+                    else:
+                        cmd.extend(["-preset", "ultrafast"])
+                        if target_format == "MP4":
+                            cmd.extend(["-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p"])
 
-        .remove-btn {
-            color: #d32f2f;
-            cursor: pointer;
-            background: none;
-            border: none;
-            font-size: 14px;
-            padding: 0 5px;
-            font-weight: bold;
-        }
+                    cmd.append(output_video)
+                    process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, universal_newlines=True, encoding="utf-8", errors="replace")
+                    process.wait()
 
-        .divider {
-            text-align: center;
-            color: #888;
-            font-size: 12px;
-            margin: 20px 0;
-            position: relative;
-        }
+                    if process.returncode != 0:
+                        raise RuntimeError("URLからの変換処理に失敗しました。")
 
-        input[type="text"], select {
-            width: 100%;
-            padding: 10px 12px;
-            border: 1px solid #ccc;
-            border-radius: 6px;
-            font-size: 14px;
-            background: #f9f9f9;
-        }
+                    with open(output_video, "rb") as vf:
+                        converted_files[f"extracted_video{ext}"] = vf.read()
 
-        .size-inputs {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-            margin-top: 8px;
-        }
+            task["status"] = "completed"
+            task["progress"] = 100
+            task["message"] = "変換が完了しました！"
+            task["files"] = converted_files
+            return
 
-        .size-inputs input {
-            width: 50%;
-        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            has_m3u8 = False
+            m3u8_file_path = None
 
-        .checkbox-label {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 12px;
-            font-weight: normal;
-            margin-top: 6px;
-            cursor: pointer;
-        }
+            for file_info in files_data:
+                filename = file_info["filename"]
+                save_path = os.path.join(tmpdir, filename)
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                with open(save_path, "wb") as f:
+                    f.write(file_info["contents"])
 
-        .submit-btn {
-            width: 100%;
-            padding: 14px;
-            background: #cccccc;
-            color: #666666;
-            border: none;
-            border-radius: 8px;
-            font-size: 15px;
-            font-weight: bold;
-            cursor: not-allowed;
-            transition: background 0.3s;
-            margin-top: 10px;
-        }
+                if filename.lower().endswith(".zip"):
+                    with zipfile.ZipFile(save_path, 'r') as zip_ref:
+                        zip_ref.extractall(tmpdir)
 
-        .submit-btn.active {
-            background: #2e7d32;
-            color: white;
-            cursor: pointer;
-        }
+            for root, _, filenames in os.walk(tmpdir):
+                for fn in filenames:
+                    if fn.lower().endswith(".m3u8"):
+                        has_m3u8 = True
+                        m3u8_file_path = os.path.join(root, fn)
+                        break
+                if has_m3u8:
+                    break
 
-        .progress-section {
-            margin-top: 20px;
-            display: none;
-        }
+            if has_m3u8 and target_format != "M3U8":
+                task["message"] = "M3U8とセグメント(.ts)を結合中..."
+                ext = f".{target_format.lower()}"
+                out_name = os.path.splitext(os.path.basename(m3u8_file_path))[0]
+                output_video = os.path.join(tmpdir, f"output{ext}")
 
-        .progress-header {
-            display: flex;
-            justify-content: space-between;
-            font-size: 12px;
-            color: #333;
-            margin-bottom: 6px;
-        }
+                cmd = [ffmpeg_exe, "-y", "-allowed_extensions", "ALL", "-i", m3u8_file_path]
+                if target_format == "TS":
+                    cmd.extend(["-c", "copy"])
+                else:
+                    cmd.extend(["-preset", "ultrafast"])
+                    if target_format == "MP4":
+                        cmd.extend(["-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p"])
 
-        .progress-bar-bg {
-            width: 100%;
-            height: 10px;
-            background: #e0e0e0;
-            border-radius: 5px;
-            overflow: hidden;
-        }
+                cmd.append(output_video)
+                process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, universal_newlines=True, encoding="utf-8", errors="replace")
+                process.wait()
 
-        .progress-bar-fill {
-            height: 100%;
-            width: 0%;
-            background: #2e7d32;
-            transition: width 0.3s;
-        }
+                if process.returncode != 0:
+                    raise RuntimeError("M3U8の結合に失敗しました。.tsファイルがZIP内または同じフォルダにすべて含まれているか確認してください。")
 
-        .download-list {
-            margin-top: 15px;
-        }
+                with open(output_video, "rb") as vf:
+                    converted_files[f"{out_name}{ext}"] = vf.read()
+            else:
+                for idx, file_info in enumerate(files_data):
+                    filename = file_info["filename"]
+                    if filename.lower().endswith(".zip"):
+                        continue
+                    if has_m3u8 and filename.lower().endswith(".m3u8") and target_format != "M3U8":
+                        continue
 
-        .download-btn {
-            display: block;
-            width: 100%;
-            padding: 12px;
-            background: #1976d2;
-            color: white;
-            text-align: center;
-            border-radius: 8px;
-            text-decoration: none;
-            font-size: 14px;
-            font-weight: bold;
-            margin-top: 8px;
-        }
-    </style>
-</head>
-<body>
+                    orig_name, orig_ext = os.path.splitext(filename)
+                    orig_ext = orig_ext.lower()
+                    input_file = os.path.join(tmpdir, filename)
 
-<div class="container">
-    <h1>メディア変換・サイズ変更<br>ツール</h1>
+                    if orig_ext in VIDEO_EXTENSIONS or target_format in ("MP4", "WEBM", "MOV", "AVI", "M3U8", "TS"):
+                        if target_format == "M3U8":
+                            task["message"] = f"{filename}をM3U8に変換中..."
+                            hls_dir = os.path.join(tmpdir, f"hls_{orig_name}")
+                            os.makedirs(hls_dir, exist_ok=True)
+                            out_path = os.path.join(hls_dir, f"{orig_name}.m3u8")
+                            
+                            cmd = [ffmpeg_exe, "-y", "-i", input_file,
+                                   "-c:v", "libx264", "-c:a", "aac", "-f", "hls", "-hls_time", "10", "-hls_list_size", "0", out_path]
+                            process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                            process.wait()
+                            
+                            if process.returncode == 0:
+                                zip_buffer = io.BytesIO()
+                                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                                    for f in os.listdir(hls_dir):
+                                        zf.write(os.path.join(hls_dir, f), arcname=f)
+                                converted_files[f"{orig_name}_m3u8.zip"] = zip_buffer.getvalue()
+                            else:
+                                errors.append(f"{filename} のM3U8変換に失敗しました。")
+                        else:
+                            ext = f".{target_format.lower()}"
+                            output_video = os.path.join(tmpdir, f"out_{orig_name}{ext}")
 
-    <div class="tabs">
-        <button class="tab-btn" onclick="switchTab('image')">🖼️ Image (画像)</button>
-        <button class="tab-btn active" onclick="switchTab('video')">🎬 Video (動画・M3U8)</button>
-    </div>
+                            cmd = [ffmpeg_exe, "-y", "-i", input_file]
+                            if target_format == "TS":
+                                cmd.extend(["-c:v", "libx264", "-c:a", "aac"])
+                            else:
+                                cmd.extend(["-preset", "ultrafast"])
+                                if target_format == "MP4":
+                                    cmd.extend(["-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p"])
 
-    <form id="convertForm" enctype="multipart/form-data">
-        <input type="file" id="fileInput" multiple style="display: none;" onchange="handleFileSelect(event)">
+                            cmd.append(output_video)
+                            process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                            process.wait()
 
-        <div class="form-group">
-            <label id="fileLabel">ローカルファイルを追加 (複数回に分けて追加可能):</label>
-            <p class="hint" id="fileHint">※M3U8結合の場合、プレイリスト(.m3u8)と全ての動画データ(.ts)を追加してください。ZIP不要です。</p>
-            <button type="button" class="file-btn" onclick="document.getElementById('fileInput').click()">＋ ファイルを選ぶ</button>
-            <div class="file-list" id="fileListDisplay" style="display: none;"></div>
-        </div>
+                            if process.returncode == 0:
+                                with open(output_video, "rb") as vf:
+                                    converted_files[f"{orig_name}{ext}"] = vf.read()
+                            else:
+                                errors.append(f"{filename} の変換に失敗しました。")
+                    else:
+                        try:
+                            img = Image.open(input_file)
+                            img = resize_image(img, target_w, target_h, maintain_aspect)
+                            img_io = io.BytesIO()
+                            if target_format == "JPEG":
+                                img = img.convert("RGB")
+                                img.save(img_io, "JPEG", quality=95)
+                            else:
+                                img.save(img_io, target_format)
+                            converted_files[f"{orig_name}.{target_format.lower()}"] = img_io.getvalue()
+                        except Exception as e:
+                            errors.append(f"{filename}の画像変換に失敗: {e}")
 
-        <div class="divider">—— またはリンク(URL)から取得 ——</div>
+        task["status"] = "completed"
+        task["progress"] = 100
+        task["message"] = "変換が完了しました！"
+        task["files"] = converted_files
+        task["errors"] = errors
 
-        <div class="form-group">
-            <label>動画やM3U8のURL (https://...):</label>
-            <input type="text" id="videoUrl" placeholder="https://..." oninput="checkFormValid()">
-        </div>
+    except Exception as e:
+        traceback.print_exc()
+        task["status"] = "error"
+        task["message"] = f"エラーが発生しました: {str(e)}"
+        task["errors"] = [str(e)]
 
-        <div class="form-group">
-            <label>変換後のフォーマット:</label>
-            <select id="targetFormat" onchange="checkFormValid()">
-                <option value="MP4">MP4 (動画)</option>
-                <option value="TS">TS (無劣化結合・抽出)</option>
-                <option value="M3U8">M3U8 (HLSストリーミング)</option>
-                <option value="WEBM">WEBM</option>
-                <option value="MOV">MOV</option>
-                <option value="AVI">AVI</option>
-                <option value="JPEG">JPEG (画像)</option>
-                <option value="PNG">PNG (画像)</option>
-            </select>
-        </div>
 
-        <div class="form-group">
-            <label>サイズ変更モード:</label>
-            <select id="sizeMode" onchange="toggleSizeInputs()">
-                <option value="none">なし (元のサイズを維持)</option>
-                <option value="custom">サイズを直接指定 (px)</option>
-            </select>
-            <div class="size-inputs" id="sizeInputs" style="display: none;">
-                <input type="number" id="width" placeholder="幅 (px)" min="1">
-                <input type="number" id="height" placeholder="高さ (px)" min="1">
-            </div>
-            <label class="checkbox-label" id="aspectRatioLabel" style="display: none;">
-                <input type="checkbox" id="maintainAspect" value="true" checked>
-                縦横比を維持する
-            </label>
-        </div>
+@app.route("/", methods=["GET"])
+def index():
+    return render_template("index.html")
 
-        <button type="button" id="submitBtn" class="submit-btn" onclick="startConversion()">変換・サイズ変更実行</button>
-    </form>
 
-    <div class="progress-section" id="progressSection">
-        <div class="progress-header">
-            <span id="statusMessage">リクエストを送信中...</span>
-            <span id="progressPercent">0%</span>
-        </div>
-        <div class="progress-bar-bg">
-            <div class="progress-bar-fill" id="progressBarFill"></div>
-        </div>
-        <div class="download-list" id="downloadList"></div>
-    </div>
-</div>
+@app.route("/convert/", methods=["POST"])
+def convert_files():
+    target_format = request.form.get("target_format", "JPEG").upper()
+    task_id = str(uuid.uuid4())
 
-<script>
-    let currentTab = 'video';
-    let selectedFiles = []; // 選択されたファイルを蓄積する配列
+    width_str = request.form.get("width")
+    height_str = request.form.get("height")
+    maintain_aspect_str = request.form.get("maintain_aspect", "true")
 
-    function switchTab(tab) {
-        currentTab = tab;
-        const buttons = document.querySelectorAll('.tab-btn');
-        buttons[0].classList.toggle('active', tab === 'image');
-        buttons[1].classList.toggle('active', tab === 'video');
+    target_w = int(width_str) if width_str and width_str.strip().isdigit() else None
+    target_h = int(height_str) if height_str and height_str.strip().isdigit() else None
+    maintain_aspect = maintain_aspect_str.lower() == "true"
 
-        const targetFormat = document.getElementById('targetFormat');
-        const fileHint = document.getElementById('fileHint');
+    files = request.files.getlist("files")
+    video_url = request.form.get("video_url")
+    
+    files_data = []
+    for file in files:
+        if file.filename:
+            files_data.append({"filename": file.filename, "contents": file.read()})
 
-        if (tab === 'image') {
-            targetFormat.value = "JPEG";
-            fileHint.innerText = "※JPG, PNG, WEBP, HEIC等の画像ファイルを追加してください。";
-        } else {
-            targetFormat.value = "MP4";
-            fileHint.innerText = "※M3U8結合の場合、プレイリスト(.m3u8)と全ての動画データ(.ts)を追加してください。ZIP不要です。";
-        }
-        checkFormValid();
+    if video_url and video_url.strip():
+        url_str = video_url.strip()
+        parsed = urllib.parse.urlparse(url_str)
+        base_name = os.path.basename(parsed.path) or "downloaded_video"
+        files_data.append({"filename": base_name, "url": url_str})
+
+    if not files_data:
+        return jsonify({"error": "ファイルまたはURLが指定されていません"}), 400
+
+    TASKS[task_id] = {
+        "status": "processing",
+        "progress": 0,
+        "message": "変換準備中...",
+        "files": {},
+        "errors": [],
     }
 
-    // ファイル選択時に配列に追加（蓄積）
-    function handleFileSelect(event) {
-        const files = event.target.files;
-        for (let i = 0; i < files.length; i++) {
-            // 同じ名前のファイルが既に無ければ追加
-            if (!selectedFiles.some(f => f.name === files[i].name)) {
-                selectedFiles.push(files[i]);
-            }
-        }
-        event.target.value = ''; // 同じファイルを再度選べるようにリセット
-        renderFileList();
-        checkFormValid();
+    thread = threading.Thread(
+        target=process_conversion_task,
+        args=(task_id, files_data, target_format, target_w, target_h, maintain_aspect)
+    )
+    thread.start()
+
+    return jsonify({"task_id": task_id})
+
+
+@app.route("/progress/<task_id>", methods=["GET"])
+def get_progress(task_id: str):
+    if task_id not in TASKS:
+        return jsonify({"error": "タスクが見つかりません"}), 404
+
+    task = TASKS[task_id]
+    return jsonify({
+        "status": task["status"],
+        "progress": task["progress"],
+        "message": task["message"],
+        "files": list(task.get("files", {}).keys()),
+        "errors": task.get("errors", []),
+    })
+
+
+@app.route("/download/<task_id>/<filename>", methods=["GET"])
+def download_file(task_id: str, filename: str):
+    if task_id not in TASKS or filename not in TASKS[task_id]["files"]:
+        return "File not found", 404
+
+    file_data = TASKS[task_id]["files"][filename]
+    ext = os.path.splitext(filename)[1].lower()
+
+    media_types = {
+        ".mp4": "video/mp4",
+        ".ts": "video/mp2t",
+        ".webm": "video/webm",
+        ".mov": "video/quicktime",
+        ".zip": "application/zip",
     }
+    media_type = media_types.get(ext, "application/octet-stream")
 
-    // 蓄積リストからファイルを削除
-    function removeFile(index) {
-        selectedFiles.splice(index, 1);
-        renderFileList();
-        checkFormValid();
-    }
+    return send_file(
+        io.BytesIO(file_data),
+        mimetype=media_type,
+        as_attachment=True,
+        download_name=filename,
+    )
 
-    // ファイルリストの画面描画
-    function renderFileList() {
-        const display = document.getElementById('fileListDisplay');
-        if (selectedFiles.length === 0) {
-            display.style.display = 'none';
-            display.innerHTML = '';
-            return;
-        }
-        display.style.display = 'block';
-        display.innerHTML = '';
-        selectedFiles.forEach((file, index) => {
-            const div = document.createElement('div');
-            div.className = 'file-item';
-            div.innerHTML = `
-                <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 90%;">${file.name}</span>
-                <button type="button" class="remove-btn" onclick="removeFile(${index})">✖</button>
-            `;
-            display.appendChild(div);
-        });
-    }
 
-    function toggleSizeInputs() {
-        const mode = document.getElementById('sizeMode').value;
-        const isCustom = mode === 'custom';
-        document.getElementById('sizeInputs').style.display = isCustom ? 'flex' : 'none';
-        document.getElementById('aspectRatioLabel').style.display = isCustom ? 'flex' : 'none';
-    }
-
-    function checkFormValid() {
-        const videoUrl = document.getElementById('videoUrl').value.trim();
-        const submitBtn = document.getElementById('submitBtn');
-
-        if (selectedFiles.length > 0 || videoUrl.length > 0) {
-            submitBtn.classList.add('active');
-            submitBtn.disabled = false;
-        } else {
-            submitBtn.classList.remove('active');
-            submitBtn.disabled = true;
-        }
-    }
-
-    async function startConversion() {
-        // 自前でFormDataを組み立てる（蓄積したファイルをすべて送信）
-        const formData = new FormData();
-        selectedFiles.forEach(file => {
-            formData.append('files', file);
-        });
-        formData.append('target_format', document.getElementById('targetFormat').value);
-        formData.append('video_url', document.getElementById('videoUrl').value);
-        
-        const mode = document.getElementById('sizeMode').value;
-        if (mode === 'custom') {
-            formData.append('width', document.getElementById('width').value);
-            formData.append('height', document.getElementById('height').value);
-            formData.append('maintain_aspect', document.getElementById('maintainAspect').checked);
-        }
-
-        document.getElementById('progressSection').style.display = 'block';
-        document.getElementById('downloadList').innerHTML = '';
-        updateProgress(0, 'リクエストを送信中...');
-
-        try {
-            const res = await fetch('/convert/', {
-                method: 'POST',
-                body: formData
-            });
-
-            const data = await res.json();
-            if (data.error) {
-                alert("エラーが発生しました:\n" + data.error);
-                return;
-            }
-
-            pollProgress(data.task_id);
-        } catch (err) {
-            alert("通信エラーが発生しました。");
-        }
-    }
-
-    async function pollProgress(taskId) {
-        const interval = setInterval(async () => {
-            try {
-                const res = await fetch(`/progress/${taskId}`);
-                const data = await res.json();
-
-                if (data.error) {
-                    clearInterval(interval);
-                    alert("処理エラー:\n" + data.error);
-                    return;
-                }
-
-                updateProgress(data.progress, data.message);
-
-                if (data.status === 'completed') {
-                    clearInterval(interval);
-                    showDownloads(taskId, data.files);
-                } else if (data.status === 'error') {
-                    clearInterval(interval);
-                    const errText = data.errors ? data.errors.join("\n") : data.message;
-                    alert("エラーが発生しました:\n" + errText);
-                }
-            } catch (e) {
-                clearInterval(interval);
-                alert("進捗の取得に失敗しました。");
-            }
-        }, 1000);
-    }
-
-    function updateProgress(percent, message) {
-        document.getElementById('progressBarFill').style.width = `${percent}%`;
-        document.getElementById('progressPercent').innerText = `${percent}%`;
-        document.getElementById('statusMessage').innerText = message;
-    }
-
-    function showDownloads(taskId, files) {
-        const listContainer = document.getElementById('downloadList');
-        listContainer.innerHTML = '';
-
-        files.forEach(filename => {
-            const btn = document.createElement('a');
-            btn.className = 'download-btn';
-            btn.href = `/download/${taskId}/${encodeURIComponent(filename)}`;
-            btn.innerText = `⬇️ ${filename} をダウンロード`;
-            listContainer.appendChild(btn);
-        });
-    }
-
-    // 初期化
-    checkFormValid();
-</script>
-</body>
-</html>
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
