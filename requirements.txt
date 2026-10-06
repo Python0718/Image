@@ -2,6 +2,7 @@ Flask
 gunicorn
 Pillow
 pillow-heif
+pillow-avif-plugin
 rawpy
 svglib
 reportlab
