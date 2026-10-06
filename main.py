@@ -9,7 +9,14 @@ from svglib.svglib import svg2rlg
 
 pillow_heif.register_heif_opener()
 
-app = Flask(__name__)
+# --- templates フォルダの絶対パスを明示的に指定 ---
+base_dir = os.path.abspath(os.path.dirname(__file__))
+template_dir = os.path.join(base_dir, "templates")
+
+app = Flask(__name__, template_folder=template_dir)
+
+# ... 以下同じ ...
+
 
 RAW_EXTENSIONS = {
     "cr2",
