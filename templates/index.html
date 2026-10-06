@@ -80,27 +80,28 @@
 
         .hint {
             font-size: 11px;
-            color: #666;
+            color: #d32f2f;
             margin-bottom: 10px;
             line-height: 1.4;
+            font-weight: bold;
         }
 
         .file-btn {
-            background: #e0e0e0;
-            border: 1px solid #ccc;
-            padding: 10px 16px;
+            background: #2e7d32;
+            color: white;
+            border: none;
+            padding: 12px 16px;
             border-radius: 8px;
             font-size: 14px;
             font-weight: bold;
             cursor: pointer;
-            color: #333;
             width: 100%;
             text-align: center;
             transition: background 0.2s;
         }
 
         .file-btn:active {
-            background: #d0d0d0;
+            background: #1b5e20;
         }
 
         .file-list {
@@ -253,12 +254,13 @@
     </div>
 
     <form id="convertForm" enctype="multipart/form-data">
-        <input type="file" id="fileInput" multiple style="display: none;" onchange="handleFileSelect(event)">
+        <!-- フォルダごと、または複数ファイルを一度に選択できるように変更 -->
+        <input type="file" id="fileInput" multiple webkitdirectory style="display: none;" onchange="handleFileSelect(event)">
 
         <div class="form-group">
-            <label id="fileLabel">ローカルファイルを追加 (複数回に分けて追加可能):</label>
-            <p class="hint" id="fileHint">※M3U8結合の場合、プレイリスト(.m3u8)と全ての動画データ(.ts)を追加してください。ZIP不要です。</p>
-            <button type="button" class="file-btn" onclick="document.getElementById('fileInput').click()">＋ ファイルを選ぶ</button>
+            <label id="fileLabel">M3U8と.tsが入ったフォルダを選択:</label>
+            <p class="hint" id="fileHint">※スマホから行う場合、プレイリストと全TSファイルが入った「フォルダ」を丸ごと選択してください。</p>
+            <button type="button" class="file-btn" onclick="document.getElementById('fileInput').click()">📁 フォルダを選ぶ</button>
             <div class="file-list" id="fileListDisplay" style="display: none;"></div>
         </div>
 
@@ -316,7 +318,7 @@
 
 <script>
     let currentTab = 'video';
-    let selectedFiles = []; // 選択されたファイルを蓄積する配列
+    let selectedFiles = [];
 
     function switchTab(tab) {
         currentTab = tab;
@@ -326,39 +328,36 @@
 
         const targetFormat = document.getElementById('targetFormat');
         const fileHint = document.getElementById('fileHint');
+        const fileInput = document.getElementById('fileInput');
 
         if (tab === 'image') {
             targetFormat.value = "JPEG";
-            fileHint.innerText = "※JPG, PNG, WEBP, HEIC等の画像ファイルを追加してください。";
+            fileHint.innerText = "※JPG, PNG等の画像ファイルを複数選択してください。";
+            fileInput.removeAttribute('webkitdirectory');
         } else {
             targetFormat.value = "MP4";
-            fileHint.innerText = "※M3U8結合の場合、プレイリスト(.m3u8)と全ての動画データ(.ts)を追加してください。ZIP不要です。";
+            fileHint.innerText = "※プレイリストと全TSファイルが入った「フォルダ」を丸ごと選択してください。";
+            fileInput.setAttribute('webkitdirectory', '');
         }
         checkFormValid();
     }
 
-    // ファイル選択時に配列に追加（蓄積）
     function handleFileSelect(event) {
         const files = event.target.files;
+        selectedFiles = []; // リセットして一括読み込み
         for (let i = 0; i < files.length; i++) {
-            // 同じ名前のファイルが既に無ければ追加
-            if (!selectedFiles.some(f => f.name === files[i].name)) {
-                selectedFiles.push(files[i]);
-            }
+            selectedFiles.push(files[i]);
         }
-        event.target.value = ''; // 同じファイルを再度選べるようにリセット
         renderFileList();
         checkFormValid();
     }
 
-    // 蓄積リストからファイルを削除
     function removeFile(index) {
         selectedFiles.splice(index, 1);
         renderFileList();
         checkFormValid();
     }
 
-    // ファイルリストの画面描画
     function renderFileList() {
         const display = document.getElementById('fileListDisplay');
         if (selectedFiles.length === 0) {
@@ -368,7 +367,9 @@
         }
         display.style.display = 'block';
         display.innerHTML = '';
-        selectedFiles.forEach((file, index) => {
+        
+        // 最初の10件＋件数を表示
+        selectedFiles.slice(0, 15).forEach((file, index) => {
             const div = document.createElement('div');
             div.className = 'file-item';
             div.innerHTML = `
@@ -377,6 +378,12 @@
             `;
             display.appendChild(div);
         });
+        if (selectedFiles.length > 15) {
+            const div = document.createElement('div');
+            div.className = 'file-item';
+            div.innerHTML = `<span style="color:#666; font-weight:bold;">他 ${selectedFiles.length - 15} 個のファイル...</span>`;
+            display.appendChild(div);
+        }
     }
 
     function toggleSizeInputs() {
@@ -400,10 +407,10 @@
     }
 
     async function startConversion() {
-        // 自前でFormDataを組み立てる（蓄積したファイルをすべて送信）
         const formData = new FormData();
         selectedFiles.forEach(file => {
-            formData.append('files', file);
+            // フォルダ選択時の相対パス構造を保持して送信
+            formData.append('files', file, file.webkitRelativePath || file.name);
         });
         formData.append('target_format', document.getElementById('targetFormat').value);
         formData.append('video_url', document.getElementById('videoUrl').value);
@@ -466,6 +473,8 @@
         }, 1000);
     }
 
+    // (Python側で既にwebkitRelativePathの階層構造を活かせるようにFlask側が受け取る準備はできています)
+
     function updateProgress(percent, message) {
         document.getElementById('progressBarFill').style.width = `${percent}%`;
         document.getElementById('progressPercent').innerText = `${percent}%`;
@@ -485,7 +494,6 @@
         });
     }
 
-    // 初期化
     checkFormValid();
 </script>
 </body>
