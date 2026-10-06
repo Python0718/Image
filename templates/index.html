@@ -78,36 +78,70 @@
             margin-bottom: 8px;
         }
 
-        .file-input-wrapper {
-            display: flex;
-            align-items: center;
-            gap: 10px;
+        .hint {
+            font-size: 11px;
+            color: #666;
+            margin-bottom: 10px;
+            line-height: 1.4;
         }
 
         .file-btn {
             background: #e0e0e0;
             border: 1px solid #ccc;
-            padding: 6px 14px;
-            border-radius: 16px;
-            font-size: 12px;
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: bold;
             cursor: pointer;
             color: #333;
+            width: 100%;
+            text-align: center;
+            transition: background 0.2s;
         }
 
-        .file-name {
+        .file-btn:active {
+            background: #d0d0d0;
+        }
+
+        .file-list {
+            margin-top: 10px;
+            max-height: 150px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 5px;
+            background: #f9f9f9;
+        }
+
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
             font-size: 12px;
-            color: #666;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            max-width: 250px;
+            padding: 6px 8px;
+            border-bottom: 1px solid #eee;
+            color: #444;
+        }
+
+        .file-item:last-child {
+            border-bottom: none;
+        }
+
+        .remove-btn {
+            color: #d32f2f;
+            cursor: pointer;
+            background: none;
+            border: none;
+            font-size: 14px;
+            padding: 0 5px;
+            font-weight: bold;
         }
 
         .divider {
             text-align: center;
             color: #888;
             font-size: 12px;
-            margin: 15px 0;
+            margin: 20px 0;
             position: relative;
         }
 
@@ -143,15 +177,16 @@
 
         .submit-btn {
             width: 100%;
-            padding: 12px;
+            padding: 14px;
             background: #cccccc;
             color: #666666;
             border: none;
-            border-radius: 6px;
-            font-size: 14px;
+            border-radius: 8px;
+            font-size: 15px;
             font-weight: bold;
             cursor: not-allowed;
-            transition: background 0.2s;
+            transition: background 0.3s;
+            margin-top: 10px;
         }
 
         .submit-btn.active {
@@ -195,13 +230,13 @@
         .download-btn {
             display: block;
             width: 100%;
-            padding: 10px;
+            padding: 12px;
             background: #1976d2;
             color: white;
             text-align: center;
-            border-radius: 6px;
+            border-radius: 8px;
             text-decoration: none;
-            font-size: 13px;
+            font-size: 14px;
             font-weight: bold;
             margin-top: 8px;
         }
@@ -218,26 +253,25 @@
     </div>
 
     <form id="convertForm" enctype="multipart/form-data">
-        <input type="file" id="fileInput" name="files" multiple style="display: none;" onchange="updateFileName()">
+        <input type="file" id="fileInput" multiple style="display: none;" onchange="handleFileSelect(event)">
 
         <div class="form-group">
-            <label id="fileLabel">ローカルの動画・プレイリストファイルを選択 (MP4, M3U8, TS, ZIP等):</label>
-            <div class="file-input-wrapper">
-                <button type="button" class="file-btn" onclick="document.getElementById('fileInput').click()">ファイルを選択</button>
-                <span class="file-name" id="fileNameDisplay">ファイル未選択</span>
-            </div>
+            <label id="fileLabel">ローカルファイルを追加 (複数回に分けて追加可能):</label>
+            <p class="hint" id="fileHint">※M3U8結合の場合、プレイリスト(.m3u8)と全ての動画データ(.ts)を追加してください。ZIP不要です。</p>
+            <button type="button" class="file-btn" onclick="document.getElementById('fileInput').click()">＋ ファイルを選ぶ</button>
+            <div class="file-list" id="fileListDisplay" style="display: none;"></div>
         </div>
 
         <div class="divider">—— またはリンク(URL)から取得 ——</div>
 
         <div class="form-group">
             <label>動画やM3U8のURL (https://...):</label>
-            <input type="text" id="videoUrl" name="video_url" placeholder="https://..." oninput="checkFormValid()">
+            <input type="text" id="videoUrl" placeholder="https://..." oninput="checkFormValid()">
         </div>
 
         <div class="form-group">
             <label>変換後のフォーマット:</label>
-            <select id="targetFormat" name="target_format" onchange="checkFormValid()">
+            <select id="targetFormat" onchange="checkFormValid()">
                 <option value="MP4">MP4 (動画)</option>
                 <option value="TS">TS (無劣化結合・抽出)</option>
                 <option value="M3U8">M3U8 (HLSストリーミング)</option>
@@ -256,11 +290,11 @@
                 <option value="custom">サイズを直接指定 (px)</option>
             </select>
             <div class="size-inputs" id="sizeInputs" style="display: none;">
-                <input type="number" id="width" name="width" placeholder="幅 (px)" min="1">
-                <input type="number" id="height" name="height" placeholder="高さ (px)" min="1">
+                <input type="number" id="width" placeholder="幅 (px)" min="1">
+                <input type="number" id="height" placeholder="高さ (px)" min="1">
             </div>
             <label class="checkbox-label" id="aspectRatioLabel" style="display: none;">
-                <input type="checkbox" id="maintainAspect" name="maintain_aspect" value="true" checked>
+                <input type="checkbox" id="maintainAspect" value="true" checked>
                 縦横比を維持する
             </label>
         </div>
@@ -282,6 +316,7 @@
 
 <script>
     let currentTab = 'video';
+    let selectedFiles = []; // 選択されたファイルを蓄積する配列
 
     function switchTab(tab) {
         currentTab = tab;
@@ -289,30 +324,59 @@
         buttons[0].classList.toggle('active', tab === 'image');
         buttons[1].classList.toggle('active', tab === 'video');
 
-        const fileLabel = document.getElementById('fileLabel');
         const targetFormat = document.getElementById('targetFormat');
+        const fileHint = document.getElementById('fileHint');
 
         if (tab === 'image') {
-            fileLabel.innerText = "ローカルの画像ファイルを選択 (JPG, PNG, WEBP, HEIC等):";
             targetFormat.value = "JPEG";
+            fileHint.innerText = "※JPG, PNG, WEBP, HEIC等の画像ファイルを追加してください。";
         } else {
-            fileLabel.innerText = "ローカルの動画・プレイリストファイルを選択 (MP4, M3U8, TS, ZIP等):";
             targetFormat.value = "MP4";
+            fileHint.innerText = "※M3U8結合の場合、プレイリスト(.m3u8)と全ての動画データ(.ts)を追加してください。ZIP不要です。";
         }
         checkFormValid();
     }
 
-    function updateFileName() {
-        const input = document.getElementById('fileInput');
-        const display = document.getElementById('fileNameDisplay');
-        if (input.files.length === 0) {
-            display.innerText = "ファイル未選択";
-        } else if (input.files.length === 1) {
-            display.innerText = input.files[0].name;
-        } else {
-            display.innerText = `${input.files.length} 個のファイルを選択中`;
+    // ファイル選択時に配列に追加（蓄積）
+    function handleFileSelect(event) {
+        const files = event.target.files;
+        for (let i = 0; i < files.length; i++) {
+            // 同じ名前のファイルが既に無ければ追加
+            if (!selectedFiles.some(f => f.name === files[i].name)) {
+                selectedFiles.push(files[i]);
+            }
         }
+        event.target.value = ''; // 同じファイルを再度選べるようにリセット
+        renderFileList();
         checkFormValid();
+    }
+
+    // 蓄積リストからファイルを削除
+    function removeFile(index) {
+        selectedFiles.splice(index, 1);
+        renderFileList();
+        checkFormValid();
+    }
+
+    // ファイルリストの画面描画
+    function renderFileList() {
+        const display = document.getElementById('fileListDisplay');
+        if (selectedFiles.length === 0) {
+            display.style.display = 'none';
+            display.innerHTML = '';
+            return;
+        }
+        display.style.display = 'block';
+        display.innerHTML = '';
+        selectedFiles.forEach((file, index) => {
+            const div = document.createElement('div');
+            div.className = 'file-item';
+            div.innerHTML = `
+                <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 90%;">${file.name}</span>
+                <button type="button" class="remove-btn" onclick="removeFile(${index})">✖</button>
+            `;
+            display.appendChild(div);
+        });
     }
 
     function toggleSizeInputs() {
@@ -323,11 +387,10 @@
     }
 
     function checkFormValid() {
-        const fileInput = document.getElementById('fileInput');
         const videoUrl = document.getElementById('videoUrl').value.trim();
         const submitBtn = document.getElementById('submitBtn');
 
-        if (fileInput.files.length > 0 || videoUrl.length > 0) {
+        if (selectedFiles.length > 0 || videoUrl.length > 0) {
             submitBtn.classList.add('active');
             submitBtn.disabled = false;
         } else {
@@ -337,8 +400,20 @@
     }
 
     async function startConversion() {
-        const form = document.getElementById('convertForm');
-        const formData = new FormData(form);
+        // 自前でFormDataを組み立てる（蓄積したファイルをすべて送信）
+        const formData = new FormData();
+        selectedFiles.forEach(file => {
+            formData.append('files', file);
+        });
+        formData.append('target_format', document.getElementById('targetFormat').value);
+        formData.append('video_url', document.getElementById('videoUrl').value);
+        
+        const mode = document.getElementById('sizeMode').value;
+        if (mode === 'custom') {
+            formData.append('width', document.getElementById('width').value);
+            formData.append('height', document.getElementById('height').value);
+            formData.append('maintain_aspect', document.getElementById('maintainAspect').checked);
+        }
 
         document.getElementById('progressSection').style.display = 'block';
         document.getElementById('downloadList').innerHTML = '';
@@ -410,7 +485,7 @@
         });
     }
 
-    // 初期化チェック
+    // 初期化
     checkFormValid();
 </script>
 </body>
