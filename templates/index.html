@@ -3,289 +3,198 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>メディア変換・サイズ変更ツール</title>
+    <title>画像変換ツール</title>
     <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-        }
         body {
-            background-color: #e5e5e5;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            max-width: 600px;
+            margin: 40px auto;
+            padding: 0 20px;
+            background-color: #f9f9f9;
+            color: #333;
         }
         .container {
             background: #ffffff;
-            width: 100%;
-            max-width: 480px;
+            padding: 30px;
             border-radius: 12px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-            padding: 24px 20px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
         }
         h1 {
-            text-align: center;
-            font-size: 20px;
-            color: #111;
+            font-size: 1.5rem;
             margin-bottom: 20px;
-            font-weight: bold;
-        }
-        .tabs {
-            display: flex;
-            border-bottom: 2px solid #e0e0e0;
-            margin-bottom: 20px;
-        }
-        .tab-btn {
-            flex: 1;
-            padding: 10px;
             text-align: center;
-            background: none;
-            border: none;
-            font-size: 14px;
-            font-weight: bold;
-            color: #666;
+        }
+        .drop-zone {
+            border: 2px dashed #0070f3;
+            border-radius: 8px;
+            padding: 40px 20px;
+            text-align: center;
+            background: #f0f7ff;
             cursor: pointer;
-            border-bottom: 3px solid transparent;
+            transition: background 0.2s;
         }
-        .tab-btn.active {
-            color: #2e7d32;
-            border-bottom-color: #2e7d32;
+        .drop-zone.dragover {
+            background: #e1f0ff;
         }
-        .form-group { margin-bottom: 20px; }
-        label { display: block; font-size: 13px; font-weight: bold; margin-bottom: 8px; }
-        .hint { font-size: 11px; color: #666; margin-bottom: 10px; line-height: 1.4; }
-        
-        .btn-group { display: flex; gap: 10px; }
-        .file-btn {
-            flex: 1;
-            background: #2e7d32;
+        .form-group {
+            margin-top: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        select, input[type="range"], button {
+            width: 100%;
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #0070f3;
             color: white;
             border: none;
-            padding: 12px 10px;
-            border-radius: 8px;
-            font-size: 13px;
             font-weight: bold;
+            font-size: 1rem;
             cursor: pointer;
+            margin-top: 20px;
+            transition: background 0.2s;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        button:hover:not(:disabled) {
+            background-color: #0051a2;
+        }
+        #status {
+            margin-top: 15px;
             text-align: center;
+            font-size: 0.9rem;
         }
-        .folder-btn { background: #1976d2; }
-        .file-btn:active { filter: brightness(0.9); }
-        
-        .file-list {
+        .file-name {
             margin-top: 10px;
-            max-height: 150px;
-            overflow-y: auto;
-            border: 1px solid #ddd;
-            border-radius: 6px;
-            padding: 5px;
-            background: #f9f9f9;
-        }
-        .file-item {
-            display: flex; justify-content: space-between; align-items: center;
-            font-size: 12px; padding: 6px 8px; border-bottom: 1px solid #eee;
-        }
-        .remove-btn { color: #d32f2f; cursor: pointer; background: none; border: none; font-weight: bold; }
-        .divider { text-align: center; color: #888; font-size: 12px; margin: 20px 0; }
-        input[type="text"], select { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; }
-        .size-inputs { display: flex; gap: 10px; margin-top: 8px; }
-        .size-inputs input { width: 50%; }
-        .checkbox-label { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-top: 6px; }
-        .submit-btn {
-            width: 100%; padding: 14px; background: #ccc; color: #666; border: none;
-            border-radius: 8px; font-size: 15px; font-weight: bold; cursor: not-allowed; margin-top: 10px;
-        }
-        .submit-btn.active { background: #2e7d32; color: white; cursor: pointer; }
-        .progress-section { margin-top: 20px; display: none; }
-        .progress-header { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; }
-        .progress-bar-bg { width: 100%; height: 10px; background: #e0e0e0; border-radius: 5px; }
-        .progress-bar-fill { height: 100%; width: 0%; background: #2e7d32; transition: width 0.3s; }
-        .download-btn {
-            display: block; width: 100%; padding: 12px; background: #1976d2; color: white;
-            text-align: center; border-radius: 8px; text-decoration: none; font-size: 14px; font-weight: bold; margin-top: 8px;
+            font-weight: bold;
+            color: #0070f3;
         }
     </style>
 </head>
 <body>
-<div class="container">
-    <h1>メディア変換ツール</h1>
-    <div class="tabs">
-        <button class="tab-btn" onclick="switchTab('image')">🖼️ 画像</button>
-        <button class="tab-btn active" onclick="switchTab('video')">🎬 動画・M3U8</button>
-    </div>
-
-    <form id="convertForm">
-        <input type="file" id="fileInput" multiple style="display: none;" onchange="handleFileSelect(event)">
-        <input type="file" id="folderInput" multiple webkitdirectory style="display: none;" onchange="handleFileSelect(event)">
-
-        <div class="form-group">
-            <label>ローカルファイルを追加:</label>
-            <p class="hint" id="fileHint">※単体の動画・画像は「ファイル」、M3U8結合は「フォルダ」を選択してください。</p>
-            <div class="btn-group">
-                <button type="button" class="file-btn" onclick="document.getElementById('fileInput').click()">📄 ファイルを選ぶ</button>
-                <button type="button" class="file-btn folder-btn" id="folderBtn" onclick="document.getElementById('folderInput').click()">📁 フォルダを選ぶ</button>
-            </div>
-            <div class="file-list" id="fileListDisplay" style="display: none;"></div>
-        </div>
-
-        <div class="divider">—— またはリンク(URL) ——</div>
-
-        <div class="form-group">
-            <label>動画やM3U8のURL:</label>
-            <input type="text" id="videoUrl" placeholder="https://..." oninput="checkFormValid()">
-        </div>
-
-        <div class="form-group">
-            <label>変換後のフォーマット:</label>
-            <select id="targetFormat" onchange="checkFormValid()">
-                <option value="MP4">MP4 (動画)</option>
-                <option value="TS">TS (無劣化)</option>
-                <option value="M3U8">M3U8 (分割出力)</option>
-                <option value="WEBM">WEBM</option>
-                <option value="MOV">MOV</option>
-                <option value="AVI">AVI</option>
-                <option value="JPEG">JPEG (画像)</option>
-                <option value="PNG">PNG (画像)</option>
-            </select>
-        </div>
-
-        <div class="form-group">
-            <label>サイズ変更:</label>
-            <select id="sizeMode" onchange="toggleSizeInputs()">
-                <option value="none">なし</option>
-                <option value="custom">指定する (px)</option>
-            </select>
-            <div class="size-inputs" id="sizeInputs" style="display: none;">
-                <input type="number" id="width" placeholder="幅">
-                <input type="number" id="height" placeholder="高さ">
-            </div>
-            <label class="checkbox-label" id="aspectRatioLabel" style="display: none;">
-                <input type="checkbox" id="maintainAspect" value="true" checked> 縦横比を維持
-            </label>
-        </div>
-
-        <button type="button" id="submitBtn" class="submit-btn" onclick="startConversion()">実行</button>
-    </form>
-
-    <div class="progress-section" id="progressSection">
-        <div class="progress-header">
-            <span id="statusMessage">処理中...</span>
-            <span id="progressPercent">0%</span>
-        </div>
-        <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressBarFill"></div></div>
-        <div id="downloadList"></div>
-    </div>
-</div>
-
-<script>
-    let selectedFiles = [];
-
-    function switchTab(tab) {
-        document.querySelectorAll('.tab-btn')[0].classList.toggle('active', tab === 'image');
-        document.querySelectorAll('.tab-btn')[1].classList.toggle('active', tab === 'video');
+    <div class="container">
+        <h1>万能画像コンバーター</h1>
         
-        document.getElementById('targetFormat').value = tab === 'image' ? "JPEG" : "MP4";
-        document.getElementById('folderBtn').style.display = tab === 'image' ? "none" : "block";
-        document.getElementById('fileHint').innerText = tab === 'image' ? "※画像ファイルを選択してください。" : "※単体動画は「ファイル」、M3U8結合は「フォルダ」を選択。";
-        checkFormValid();
-    }
+        <div class="drop-zone" id="dropZone">
+            <p>ここにファイルをドラッグ＆ドロップ<br>またはクリックしてファイルを選択</p>
+            <input type="file" id="fileInput" style="display: none;">
+            <div class="file-name" id="fileName"></div>
+        </div>
 
-    function handleFileSelect(event) {
-        Array.from(event.target.files).forEach(file => {
-            if (!selectedFiles.some(f => f.name === file.name && f.size === file.size)) {
-                selectedFiles.push(file);
+        <div class="form-group">
+            <label for="format">変換後のフォーマット</label>
+            <select id="format">
+                <option value="JPEG">JPEG (.jpg)</option>
+                <option value="PNG">PNG (.png)</option>
+                <option value="WEBP">WebP (.webp)</option>
+                <option value="GIF">GIF (.gif)</option>
+                <option value="AVIF">AVIF (.avif)</option>
+                <option value="HEIC">HEIC (.heic)</option>
+            </select>
+        </div>
+
+        <div class="form-group" id="qualityGroup">
+            <label for="quality">画質: <span id="qualityVal">90</span>%</label>
+            <input type="range" id="quality" min="10" max="100" value="90">
+        </div>
+
+        <button id="convertBtn" disabled>変換してダウンロード</button>
+        <div id="status"></div>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const fileName = document.getElementById('fileName');
+        const convertBtn = document.getElementById('convertBtn');
+        const qualityInput = document.getElementById('quality');
+        const qualityVal = document.getElementById('qualityVal');
+        const status = document.getElementById('status');
+        let selectedFile = null;
+
+        // ドラッグ＆ドロップイベント
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) {
+                handleFile(e.dataTransfer.files[0]);
             }
         });
-        event.target.value = ''; 
-        renderFileList();
-        checkFormValid();
-    }
 
-    function removeFile(index) {
-        selectedFiles.splice(index, 1);
-        renderFileList();
-        checkFormValid();
-    }
-
-    function renderFileList() {
-        const display = document.getElementById('fileListDisplay');
-        if (selectedFiles.length === 0) { display.style.display = 'none'; return; }
-        
-        display.style.display = 'block';
-        display.innerHTML = '';
-        selectedFiles.slice(0, 15).forEach((file, idx) => {
-            display.innerHTML += `<div class="file-item"><span>${file.name}</span><button type="button" class="remove-btn" onclick="removeFile(${idx})">✖</button></div>`;
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length) handleFile(e.target.files[0]);
         });
-        if (selectedFiles.length > 15) {
-            display.innerHTML += `<div class="file-item"><span>他 ${selectedFiles.length - 15} 個のファイル...</span></div>`;
-        }
-    }
 
-    function toggleSizeInputs() {
-        const isCustom = document.getElementById('sizeMode').value === 'custom';
-        document.getElementById('sizeInputs').style.display = isCustom ? 'flex' : 'none';
-        document.getElementById('aspectRatioLabel').style.display = isCustom ? 'flex' : 'none';
-    }
-
-    function checkFormValid() {
-        const valid = selectedFiles.length > 0 || document.getElementById('videoUrl').value.trim().length > 0;
-        const btn = document.getElementById('submitBtn');
-        btn.classList.toggle('active', valid);
-        btn.disabled = !valid;
-    }
-
-    async function startConversion() {
-        const formData = new FormData();
-        selectedFiles.forEach(file => formData.append('files', file, file.webkitRelativePath || file.name));
-        formData.append('target_format', document.getElementById('targetFormat').value);
-        formData.append('video_url', document.getElementById('videoUrl').value);
-        if (document.getElementById('sizeMode').value === 'custom') {
-            formData.append('width', document.getElementById('width').value);
-            formData.append('height', document.getElementById('height').value);
-            formData.append('maintain_aspect', document.getElementById('maintainAspect').checked);
+        function handleFile(file) {
+            selectedFile = file;
+            fileName.textContent = `選択中: ${file.name}`;
+            convertBtn.disabled = false;
         }
 
-        document.getElementById('progressSection').style.display = 'block';
-        document.getElementById('downloadList').innerHTML = '';
-        updateProgress(0, '送信中...');
+        qualityInput.addEventListener('input', (e) => qualityVal.textContent = e.target.value);
 
-        try {
-            const res = await fetch('/convert/', { method: 'POST', body: formData });
-            const data = await res.json();
-            if (data.error) return alert("エラー: " + data.error);
-            pollProgress(data.task_id);
-        } catch (err) { alert("通信エラー"); }
-    }
+        // 変換リクエストの送信
+        convertBtn.addEventListener('click', async () => {
+            if (!selectedFile) return;
 
-    async function pollProgress(taskId) {
-        const interval = setInterval(async () => {
+            convertBtn.disabled = true;
+            status.textContent = '変換中...';
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+            formData.append('target_format', document.getElementById('format').value);
+            formData.append('quality', qualityInput.value);
+
             try {
-                const res = await fetch(`/progress/${taskId}`);
-                const data = await res.json();
-                if (data.error) { clearInterval(interval); return alert(data.error); }
-                
-                updateProgress(data.progress, data.message);
-                if (data.status === 'completed') {
-                    clearInterval(interval);
-                    data.files.forEach(f => {
-                        document.getElementById('downloadList').innerHTML += `<a class="download-btn" href="/download/${taskId}/${encodeURIComponent(f)}">⬇️ ${f} をダウンロード</a>`;
-                    });
-                } else if (data.status === 'error') {
-                    clearInterval(interval);
-                    alert("エラー:\n" + (data.errors ? data.errors.join("\n") : data.message));
-                }
-            } catch (e) { clearInterval(interval); }
-        }, 1000);
-    }
+                const response = await fetch('/convert', {
+                    method: 'POST',
+                    body: formData
+                });
 
-    function updateProgress(percent, msg) {
-        document.getElementById('progressBarFill').style.width = `${percent}%`;
-        document.getElementById('progressPercent').innerText = `${percent}%`;
-        document.getElementById('statusMessage').innerText = msg;
-    }
-</script>
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.error || '変換に失敗しました');
+                }
+
+                // ファイルのダウンロード処理
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+
+                // レスポンスヘッダーからファイル名を取得、無ければデフォルト設定
+                const contentDisposition = response.headers.get('Content-Disposition');
+                let downloadName = 'converted_image';
+                if (contentDisposition) {
+                    const match = contentDisposition.match(/filename="?([^"]+)"?/);
+                    if (match) downloadName = match[1];
+                }
+                a.download = downloadName;
+
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+
+                status.textContent = '完了しました！';
+            } catch (err) {
+                status.textContent = `エラー: ${err.message}`;
+            } finally {
+                convertBtn.disabled = false;
+            }
+        });
+    </script>
 </body>
 </html>
