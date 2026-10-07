@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>万能コンバーター (サーバー不要版)</title>
+    
+    <!-- 動画変換用: FFmpeg.wasm をCDNから読み込む -->
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.7/dist/umd/ffmpeg.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.4/dist/umd/ffmpeg-core.js"></script>
+    
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            max-width: 600px;
+            margin: 40px auto;
+            padding: 0 20px;
+            background-color: #f9f9f9;
+            color: #333;
+        }
+        .container {
+            background: #ffffff;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        }
+        h1 {
+            font-size: 1.5rem;
+            margin-bottom: 5px;
+            text-align: center;
+        }
+        .subtitle {
+            text-align: center;
+            font-size: 0.85rem;
+            color: #666;
+            margin-bottom: 25px;
+        }
+        
+        /* タブのスタイル */
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #eee;
+        }
+        .tab {
+            flex: 1;
+            padding: 12px;
+            text-align: center;
+            cursor: pointer;
+            font-weight: bold;
+            color: #666;
+            transition: all 0.2s;
+        }
+        .tab.active {
+            color: #0070f3;
+            border-bottom: 3px solid #0070f3;
+            margin-bottom: -2px;
+        }
+
+        .drop-zone {
+            border: 2px dashed #0070f3;
+            border-radius: 8px;
+            padding: 40px 20px;
+            text-align: center;
+            background: #f0f7ff;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .drop-zone.dragover {
+            background: #e1f0ff;
+        }
+        .form-group {
+            margin-top: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+            font-size: 0.95rem;
+        }
+        select, input[type="range"], button {
+            width: 100%;
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+            box-sizing: border-box;
+            font-size: 1rem;
+        }
+        button {
+            background-color: #0070f3;
+            color: white;
+            border: none;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 25px;
+            transition: background 0.2s;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        button:hover:not(:disabled) {
+            background-color: #0051a2;
+        }
+        #status {
+            margin-top: 15px;
+            text-align: center;
+            font-size: 0.95rem;
+            font-weight: bold;
+            color: #333;
+        }
+        .file-name {
+            margin-top: 10px;
+            font-weight: bold;
+            color: #0070f3;
+            word-break: break-all;
+        }
+        .hidden {
+            display: none !important;
+        }
+        
+        /* ローディングアニメーション */
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #0070f3;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 10px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>万能コンバーター</h1>
+        <div class="subtitle">サーバー不要・ブラウザ内で高速・安全に変換します</div>
+        
+        <div class="tabs">
+            <div class="tab active" data-mode="image" id="tabImage">画像変換</div>
+            <div class="tab" data-mode="video" id="tabVideo">動画変換</div>
+        </div>
+        
+        <div class="drop-zone" id="dropZone">
+            <p id="dropText">ここに画像をドラッグ＆ドロップ<br>またはクリックして選択</p>
+            <input type="file" id="fileInput" style="display: none;" accept="image/*">
+            <div class="file-name" id="fileName"></div>
+        </div>
+
+        <!-- 画像用設定 -->
+        <div id="imageSettings">
+            <div class="form-group">
+                <label for="formatImage">変換後のフォーマット</label>
+                <select id="formatImage">
+                    <option value="image/jpeg">JPEG (.jpg)</option>
+                    <option value="image/png">PNG (.png)</option>
+                    <option value="image/webp">WebP (.webp)</option>
+                </select>
+                <p style="font-size: 0.75rem; color: #666; margin-top: 5px;">※ブラウザ機能を利用するため、JPEG, PNG, WebP に対応しています。</p>
+            </div>
+            <div class="form-group">
+                <label for="quality">画質: <span id="qualityVal">90</span>%</label>
+                <input type="range" id="quality" min="1" max="100" value="90">
+            </div>
+        </div>
+
+        <!-- 動画用設定 -->
+        <div id="videoSettings" class="hidden">
+            <div class="form-group">
+                <label for="formatVideo">変換後のフォーマット</label>
+                <select id="formatVideo">
+                    <option value="mp4">MP4 (.mp4)</option>
+                    <option value="mov">MOV (.mov)</option>
+                    <option value="webm">WebM (.webm)</option>
+                    <option value="avi">AVI (.avi)</option>
+                </select>
+            </div>
+            <div id="ffmpegStatus" style="font-size: 0.8rem; color: #e67e22; margin-top: 10px; text-align: center; font-weight: bold;">
+                🔄 動画エンジンを読み込み中... (初回のみ数秒かかります)
+            </div>
+        </div>
+
+        <button id="convertBtn" disabled>変換してダウンロード</button>
+        <div id="status"></div>
+    </div>
+
+    <script>
+        // ==========================================
+        // 1. グローバル変数と初期設定
+        // ==========================================
+        let currentMode = 'image';
+        let selectedFile = null;
+        
+        // UI要素
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const fileName = document.getElementById('fileName');
+        const dropText = document.getElementById('dropText');
+        const convertBtn = document.getElementById('convertBtn');
+        const statusEl = document.getElementById('status');
+        
+        // 画像用UI
+        const imageSettings = document.getElementById('imageSettings');
+        const qualityInput = document.getElementById('quality');
+        const qualityVal = document.getElementById('qualityVal');
+        
+        // 動画用UI
+        const videoSettings = document.getElementById('videoSettings');
+        const ffmpegStatus = document.getElementById('ffmpegStatus');
+
+        // FFmpeg.wasm のセットアップ
+        const { FFmpeg } = window.FFmpeg;
+        const ffmpeg = new FFmpeg();
+        let isFfmpegLoaded = false;
+
+        // ==========================================
+        // 2. FFmpeg エンジンの非同期読み込み (裏で実行)
+        // ==========================================
+        async function loadFFmpeg() {
+            try {
+                await ffmpeg.load({
+                    coreURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.4/dist/umd/ffmpeg-core.js',
+                    wasmURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.4/dist/umd/ffmpeg-core.wasm'
+                });
+                isFfmpegLoaded = true;
+                ffmpegStatus.style.color = '#27ae60';
+                ffmpegStatus.innerText = '✅ 動画エンジン準備完了';
+                
+                // もし動画タブが開かれていて、ファイルがあればボタンを有効化
+                if (currentMode === 'video' && selectedFile) {
+                    convertBtn.disabled = false;
+                }
+            } catch (e) {
+                console.error(e);
+                ffmpegStatus.style.color = '#c0392b';
+                ffmpegStatus.innerText = '❌ 動画エンジンの読み込みに失敗しました。再読み込みしてください。';
+            }
+        }
+        loadFFmpeg(); // ページロード時に即実行
+
+        // ==========================================
+        // 3. UI イベントリスナー (タブ切替・ファイル選択)
+        // ==========================================
+        const tabs = document.querySelectorAll('.tab');
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                // アクティブ状態の切り替え
+                tabs.forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                currentMode = tab.dataset.mode;
+                
+                // 表示切替
+                if (currentMode === 'image') {
+                    imageSettings.classList.remove('hidden');
+                    videoSettings.classList.add('hidden');
+                    dropText.innerHTML = 'ここに画像をドラッグ＆ドロップ<br>またはクリックして選択';
+                    fileInput.accept = "image/*";
+                } else {
+                    imageSettings.classList.add('hidden');
+                    videoSettings.classList.remove('hidden');
+                    dropText.innerHTML = 'ここに動画をドラッグ＆ドロップ<br>またはクリックして選択';
+                    fileInput.accept = "video/*";
+                }
+                
+                // リセット
+                resetState();
+            });
+        });
+
+        qualityInput.addEventListener('input', (e) => qualityVal.textContent = e.target.value);
+
+        // ドラッグ＆ドロップとファイル選択
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+        });
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length) handleFile(e.target.files[0]);
+        });
+
+        function handleFile(file) {
+            // バリデーション
+            if (currentMode === 'image' && !file.type.startsWith('image/')) {
+                alert('画像ファイルを選択してください。');
+                return;
+            }
+            if (currentMode === 'video' && !file.type.startsWith('video/')) {
+                alert('動画ファイルを選択してください。');
+                return;
+            }
+
+            selectedFile = file;
+            fileName.textContent = `選択中: ${file.name}`;
+            statusEl.innerHTML = '';
+            
+            // 動画モードでFFmpegが未ロードならボタンは無効のまま
+            if (currentMode === 'video' && !isFfmpegLoaded) {
+                convertBtn.disabled = true;
+            } else {
+                convertBtn.disabled = false;
+            }
+        }
+
+        function resetState() {
+            selectedFile = null;
+            fileName.textContent = '';
+            convertBtn.disabled = true;
+            statusEl.innerHTML = '';
+            fileInput.value = '';
+        }
+
+        // ==========================================
+        // 4. メイン変換処理
+        // ==========================================
+        convertBtn.addEventListener('click', async () => {
+            if (!selectedFile) return;
+
+            convertBtn.disabled = true;
+            statusEl.innerHTML = '<span class="loader"></span>変換中... (ブラウザ内で処理しています)';
+            statusEl.style.color = '#0070f3';
+
+            try {
+                if (currentMode === 'image') {
+                    await processImage();
+                } else {
+                    await processVideo();
+                }
+            } catch (err) {
+                console.error(err);
+                statusEl.innerHTML = `❌ エラー: ${err.message}`;
+                statusEl.style.color = '#c0392b';
+                convertBtn.disabled = false;
+            }
+        });
+
+        // ==========================================
+        // 5. 画像変換ロジック (Canvas API使用)
+        // ==========================================
+        async function processImage() {
+            const targetMime = document.getElementById('formatImage').value;
+            // image/jpeg -> jpeg -> jpg
+            let ext = targetMime.split('/')[1];
+            if (ext === 'jpeg') ext = 'jpg';
+            const quality = parseInt(qualityInput.value) / 100;
+
+            const url = URL.createObjectURL(selectedFile);
+            const img = new Image();
+            
+            // Promiseで画像の読み込みを待機
+            await new Promise((resolve, reject) => {
+                img.onload = resolve;
+                img.onerror = () => reject(new Error('画像の読み込みに失敗しました'));
+                img.src = url;
+            });
+
+            // Canvasに描画
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+
+            // JPEG等の透過非対応フォーマットの場合は背景を白にする
+            if (targetMime === 'image/jpeg') {
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+            
+            ctx.drawImage(img, 0, 0);
+            URL.revokeObjectURL(url);
+
+            // 変換実行
+            canvas.toBlob((blob) => {
+                if (!blob) {
+                    throw new Error('画像の変換に失敗しました');
+                }
+                downloadBlob(blob, getOutputFilename(ext));
+                finishConversion();
+            }, targetMime, quality);
+        }
+
+        // ==========================================
+        // 6. 動画変換ロジック (FFmpeg.wasm使用)
+        // ==========================================
+        async function processVideo() {
+            if (!isFfmpegLoaded) throw new Error('動画エンジンが準備できていません');
+
+            const targetExt = document.getElementById('formatVideo').value;
+            const inputExt = selectedFile.name.split('.').pop();
+            const inputName = `input.${inputExt}`;
+            const outputName = `output.${targetExt}`;
+
+            // ファイルを Uint8Array にして FFmpeg の仮想システムに配置
+            const fileData = new Uint8Array(await selectedFile.arrayBuffer());
+            await ffmpeg.writeFile(inputName, fileData);
+
+            // 進捗状況を表示
+            ffmpeg.on('progress', ({ progress, time }) => {
+                const percent = Math.round(progress * 100);
+                if (percent >= 0 && percent <= 100) {
+                    statusEl.innerHTML = `<span class="loader"></span>変換中... ${percent}%`;
+                }
+            });
+
+            // FFmpegコマンドの実行
+            // 注: 最適化のため、あまりにも重い処理にならないよう基本的な変換に留める
+            await ffmpeg.exec(['-i', inputName, outputName]);
+
+            // 仮想システムから変換後のファイルを読み取る
+            const outputData = await ffmpeg.readFile(outputName);
+            const blob = new Blob([outputData.buffer]);
+            
+            downloadBlob(blob, getOutputFilename(targetExt));
+            
+            // メモリ解放のために仮想システム上のファイルを削除
+            await ffmpeg.deleteFile(inputName);
+            await ffmpeg.deleteFile(outputName);
+            
+            finishConversion();
+        }
+
+        // ==========================================
+        // ヘルパー関数
+        // ==========================================
+        function getOutputFilename(ext) {
+            const baseName = selectedFile.name.substring(0, selectedFile.name.lastIndexOf('.')) || selectedFile.name;
+            return `${baseName}_converted.${ext}`;
+        }
+
+        function downloadBlob(blob, filename) {
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+        }
+
+        function finishConversion() {
+            statusEl.innerHTML = '✨ 完了しました！自動的にダウンロードされます。';
+            statusEl.style.color = '#27ae60';
+            convertBtn.disabled = false;
+        }
+    </script>
+</body>
+</html>
