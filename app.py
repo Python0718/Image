@@ -46,7 +46,7 @@ HTML_PAGE = """
             <div class="row">
                 <div class="col">
                     <label>User-Agent (偽装用):</label>
-                    <input type="text" name="user_agent" placeholder="Mozilla/5.0 (Windows NT 10.0; ...)">
+                    <input type="text" name="user_agent" placeholder="Mozilla/5.0...">
                 </div>
                 <div class="col">
                     <label>Referer (偽装用):</label>
@@ -149,7 +149,7 @@ def handle_to_mp4_url():
         subprocess.run(cmd, check=True)
         return send_file(output_mp4, as_attachment=True)
     except subprocess.CalledProcessError as e:
-        return f"変換エラー（アクセス制限やURLが無効です）: {e}", 500
+        return f"変換エラー: {e}", 500
 
 @app.route('/to_mp4_local', methods=['POST'])
 def handle_to_mp4_local():
@@ -181,19 +181,24 @@ def handle_to_mp4_local():
     if not m3u8_file:
         return "エラー: 展開したZIPの中に .m3u8 ファイルが見つかりませんでした", 400
 
+    # M3U8ファイルが存在するフォルダを特定し、その中でFFmpegを実行する
+    m3u8_dir = os.path.dirname(m3u8_file)
+    m3u8_filename = os.path.basename(m3u8_file)
     output_mp4 = os.path.join(OUTPUT_FOLDER, "output_from_local.mp4")
 
     cmd = [
-        "ffmpeg", "-i", m3u8_file,
+        "ffmpeg", "-i", m3u8_filename,
         "-c", "copy", "-bsf:a", "aac_adtstoasc",
         output_mp4
     ]
 
     try:
-        subprocess.run(cmd, check=True)
+        # cwd に m3u8_dir を指定することで、相対パスのTS片を正しく認識させる
+        subprocess.run(cmd, cwd=m3u8_dir, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         return send_file(output_mp4, as_attachment=True)
     except subprocess.CalledProcessError as z_err:
-        return f"変換エラー: {z_err}", 500
+        # エラー発生時に詳細なログを返すように変更
+        return f"変換エラー (FFmpeg出力):\n{z_err.stderr}", 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
